@@ -25,13 +25,15 @@ export class CreatePropertyDto {
   @IsNotEmpty()
   location: string;
 
+  @IsOptional()
   @IsInt()
   @Min(0)
-  bedrooms: number;
+  bedrooms?: number;
 
+  @IsOptional()
   @IsInt()
   @Min(0)
-  bathrooms: number;
+  bathrooms?: number;
 
   @IsOptional()
   @IsArray()
@@ -52,12 +54,12 @@ export class CreatePropertyDto {
   agent_id?: string;
 
   @IsString()
-  @IsNotEmpty() // Assuming user_id is required
-  user_id: string; // Changed from UserID
+  @IsNotEmpty()
+  user_id: string;
 
   @IsString()
   @IsNotEmpty()
-  property_type: string; // Changed from PropertyType
+  property_type: "rent" | "sale";
 
   @IsString()
   @IsOptional()
@@ -66,7 +68,7 @@ export class CreatePropertyDto {
   @IsOptional()
   @IsInt()
   @Min(0)
-  garage?: number;
+  garages?: number;
 
   @IsOptional()
   @IsInt()
