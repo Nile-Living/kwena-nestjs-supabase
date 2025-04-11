@@ -4,6 +4,8 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PropertiesModule } from "./properties/properties.module";
 import { SupabaseModule } from "./supabase/supabase.module";
+import { AuthModule } from './auth/auth.module';
+import { SavedPropertiesModule } from './users/saved-properties/saved-properties.module';
 
 
 @Module({
@@ -13,7 +15,9 @@ import { SupabaseModule } from "./supabase/supabase.module";
       envFilePath: ".env"
     }),
     SupabaseModule,
-    PropertiesModule
+    AuthModule,
+    PropertiesModule,
+    SavedPropertiesModule
   ],
   controllers: [AppController],
   providers: [AppService],
