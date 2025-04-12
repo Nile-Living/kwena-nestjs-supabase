@@ -5,21 +5,18 @@ import {
   InternalServerErrorException,
   Logger,
   BadRequestException,
-} from "@nestjs/common";
-import { SupabaseClient } from "@supabase/supabase-js";
-import { SUPABASE_CLIENT } from "../supabase/supabase.constants";
-import { CreatePropertyDto } from "./dto/create-property.dto";
-import { QueryPropertyDto } from "./dto/query-property.dto";
-import {
-  PropertyResponseDto,
-  Property,
-} from "./dto/property.response.dto";
-import { UpdatePropertyDto } from "./dto/update-property.dto";
+} from '@nestjs/common';
+import { SupabaseClient } from '@supabase/supabase-js';
+import { SUPABASE_CLIENT } from '../supabase/supabase.constants';
+import { CreatePropertyDto } from './dto/create-property.dto';
+import { QueryPropertyDto } from './dto/query-property.dto';
+import { PropertyResponseDto, Property } from './dto/property.response.dto';
+import { UpdatePropertyDto } from './dto/update-property.dto';
 
 @Injectable()
 export class PropertiesService {
   private readonly logger = new Logger(PropertiesService.name);
-  private readonly baseTableName = "properties";
+  private readonly baseTableName = 'properties';
 
   constructor(
     @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient,
@@ -27,7 +24,7 @@ export class PropertiesService {
 
   // --- Helper to get detail table name (Keep as is) ---
   private getDetailTableName(category: string): string | null {
-    const validCategories = ["house", "land", "apartment", "commercial"];
+    const validCategories = ['house', 'land', 'apartment', 'commercial'];
     if (validCategories.includes(category)) {
       return `property_details_${category}`;
     }
@@ -56,7 +53,7 @@ export class PropertiesService {
         baseError?.stack,
       );
       throw new InternalServerErrorException(
-        `Failed to create base property: ${baseError?.message || "Unknown error"}`,
+        `Failed to create base property: ${baseError?.message || 'Unknown error'}`,
       );
     }
     this.logger.log(`Base property created with ID: ${newBaseProperty.id}`);
@@ -80,26 +77,19 @@ export class PropertiesService {
         await this.supabase
           .from(this.baseTableName)
           .delete()
-          .eq("id", newBaseProperty.id);
+          .eq('id', newBaseProperty.id);
         throw new InternalServerErrorException(
           `Failed to insert property details: ${detailError.message}`,
         );
       }
-      this.logger.log(
-        `Details inserted successfully into ${detailTableName}`,
-      );
-    } else if (
-      details &&
-      Object.keys(details).length > 0 &&
-      !detailTableName
-    ) {
+      this.logger.log(`Details inserted successfully into ${detailTableName}`);
+    } else if (details && Object.keys(details).length > 0 && !detailTableName) {
       this.logger.warn(
         `Details provided for property ${newBaseProperty.id}, but no detail table found for category ${baseData.category}.`,
       );
     }
-    // Refetch to include details (or construct manually if preferred)
-    // return this.findOne(newBaseProperty.id); // Or return newBaseProperty if details aren't needed immediately
-    return newBaseProperty as Property; // Cast for now, assuming details aren't immediately needed back
+
+    return newBaseProperty as Property;
   }
 
   // --- Find All Method (MODIFIED) ---
@@ -108,7 +98,7 @@ export class PropertiesService {
     const {
       page = 1,
       pageSize = 10,
-      sort = "created_at.desc", // Default sort on view column
+      sort = 'created_at.desc', // Default sort on view column
       category,
       propertyType,
       location,
@@ -137,7 +127,6 @@ export class PropertiesService {
     const from = offset;
     const to = offset + pageSize - 1;
 
-    // Query the view
     let query = this.supabase
       .from('properties_view') // Query the view directly
       .select('*', { count: 'exact' }); // Select all view columns, get total count
@@ -153,59 +142,75 @@ export class PropertiesService {
     if (status && status !== 'all') query = query.eq('status', status);
 
     // Filters on coalesced/detail fields from the view
-    if (bedrooms !== undefined) query = query.gte('effective_bedrooms', bedrooms);
-    if (bathrooms !== undefined) query = query.gte('effective_bathrooms', bathrooms);
+    if (bedrooms !== undefined)
+      query = query.gte('effective_bedrooms', bedrooms);
+    if (bathrooms !== undefined)
+      query = query.gte('effective_bathrooms', bathrooms);
     if (garages !== undefined) query = query.gte('effective_garages', garages); // House only via view logic
-    if (house_parkings !== undefined) query = query.gte('effective_house_parkings', house_parkings); // House only via view logic
-    if (parking_spaces !== undefined) query = query.gte('effective_parking_spaces', parking_spaces); // Apt/Comm via view logic
+    if (house_parkings !== undefined)
+      query = query.gte('effective_house_parkings', house_parkings); // House only via view logic
+    if (parking_spaces !== undefined)
+      query = query.gte('effective_parking_spaces', parking_spaces); // Apt/Comm via view logic
 
     // Land filters (use specific view columns)
-    if (min_size_sqm !== undefined) query = query.gte('land_size_sqm', min_size_sqm); // Assuming view has land_size_sqm
-    if (max_size_sqm !== undefined) query = query.lte('land_size_sqm', max_size_sqm);
+    if (min_size_sqm !== undefined)
+      query = query.gte('land_size_sqm', min_size_sqm); // Assuming view has land_size_sqm
+    if (max_size_sqm !== undefined)
+      query = query.lte('land_size_sqm', max_size_sqm);
     if (legal_status) query = query.eq('land_legal_status', legal_status);
     if (intended_use) query = query.eq('land_intended_use', intended_use);
-    if (road_access !== undefined) query = query.eq('land_road_access', road_access);
+    if (road_access !== undefined)
+      query = query.eq('land_road_access', road_access);
     if (water_supply) query = query.eq('land_water_supply', water_supply);
-    if (electricity_available !== undefined) query = query.eq('land_electricity_available', electricity_available);
+    if (electricity_available !== undefined)
+      query = query.eq('land_electricity_available', electricity_available);
     if (fenced !== undefined) query = query.eq('land_fenced', fenced);
 
     // Commercial filters
-    if (commercial_property_type) query = query.eq('commercial_property_type_detail', commercial_property_type);
+    if (commercial_property_type)
+      query = query.eq(
+        'commercial_property_type_detail',
+        commercial_property_type,
+      );
     // Add square meter filters if needed, using effective_square_meters
 
     // Apply Sorting on view columns
     try {
-        const [sortFieldInput, sortOrderInput = 'desc'] = sort.split('.');
-        const sortOrder = sortOrderInput.toLowerCase() === 'asc' ? 'asc' : 'desc';
-        let sortColumn = sortFieldInput;
+      const [sortFieldInput, sortOrderInput = 'desc'] = sort.split('.');
+      const sortOrder = sortOrderInput.toLowerCase() === 'asc' ? 'asc' : 'desc';
+      let sortColumn = sortFieldInput;
 
-        // Map DTO sort fields to view column names if necessary
-        const sortColumnMapping: Record<string, string> = {
-            created_at: 'created_at',
-            price: 'price',
-            title: 'title',
-            bedrooms: 'effective_bedrooms',
-            bathrooms: 'effective_bathrooms',
-            garages: 'effective_garages',
-            parkings: 'effective_house_parkings', // Or decide which parking to sort by default
-            parking_spaces: 'effective_parking_spaces',
-            size_sqm: 'land_size_sqm', // Or effective_square_meters
-            square_meters: 'effective_square_meters',
-            status: 'status',
-            // Add other mappings as needed
-        };
+      // Map DTO sort fields to view column names if necessary
+      const sortColumnMapping: Record<string, string> = {
+        created_at: 'created_at',
+        price: 'price',
+        title: 'title',
+        bedrooms: 'effective_bedrooms',
+        bathrooms: 'effective_bathrooms',
+        garages: 'effective_garages',
+        parkings: 'effective_house_parkings', // Or decide which parking to sort by default
+        parking_spaces: 'effective_parking_spaces',
+        size_sqm: 'land_size_sqm', // Or effective_square_meters
+        square_meters: 'effective_square_meters',
+        status: 'status',
+        // Add other mappings as needed
+      };
 
-        sortColumn = sortColumnMapping[sortFieldInput] || 'created_at'; // Default to created_at if mapping fails
+      sortColumn = sortColumnMapping[sortFieldInput] || 'created_at'; // Default to created_at if mapping fails
 
-        query = query.order(sortColumn, {
-            ascending: sortOrder === 'asc',
-            nullsFirst: false, // Or true, depending on desired behavior
-        });
+      query = query.order(sortColumn, {
+        ascending: sortOrder === 'asc',
+        nullsFirst: false, // Or true, depending on desired behavior
+      });
     } catch (e) {
-        this.logger.warn(`Failed to parse sort parameter: ${sort}. Defaulting to created_at.desc`);
-        query = query.order('created_at', { ascending: false, nullsFirst: false });
+      this.logger.warn(
+        `Failed to parse sort parameter: ${sort}. Defaulting to created_at.desc`,
+      );
+      query = query.order('created_at', {
+        ascending: false,
+        nullsFirst: false,
+      });
     }
-
 
     // Apply Pagination
     query = query.range(from, to);
@@ -216,48 +221,125 @@ export class PropertiesService {
     const { data, error, count } = await query;
 
     if (error) {
-      this.logger.error(`Error fetching properties from view: ${error.message}`, error.stack);
-      throw new InternalServerErrorException(`Failed to retrieve properties: ${error.message}`);
+      this.logger.error(
+        `Error fetching properties from view: ${error.message}`,
+        error.stack,
+      );
+      throw new InternalServerErrorException(
+        `Failed to retrieve properties: ${error.message}`,
+      );
     }
 
-    // Map results (data is flatter now)
     const properties: Property[] = (data || []).map((viewRow: any) => {
-      // You might need to reconstruct the 'details' object if your frontend strictly expects it,
-      // or adjust the frontend to consume the flatter structure.
-      // Example reconstructing details (optional):
+      // Destructure ALL fields from the view
+      const {
+        effective_bedrooms,
+        effective_bathrooms,
+        house_garages,
+        house_parkings,
+        house_amenities,
+        house_security_features,
+        land_size_sqm,
+        land_legal_status,
+        land_intended_use,
+        land_road_access,
+        land_water_supply,
+        land_electricity_available,
+        land_fenced,
+        apt_square_meters,
+        apt_amenities,
+        apt_parking_spaces,
+        apt_security_features,
+        comm_property_type,
+        comm_square_meters,
+        comm_parking_spaces,
+        comm_amenities,
+        comm_security_features,
+        // Base fields that are still present
+        id,
+        title,
+        price,
+        location,
+        images,
+        coordinates,
+        description,
+        property_type,
+        category,
+        user_id,
+        agent_id,
+        created_at,
+        // Status fields
+        status,
+        last_updated,
+      } = viewRow;
+
+      // Reconstruct details object based on category
       let details: any = {};
-      switch (viewRow.category) {
-          case 'house':
-              details = { bedrooms: viewRow.effective_bedrooms, bathrooms: viewRow.effective_bathrooms, garages: viewRow.effective_garages, parkings: viewRow.effective_house_parkings /*, amenities, security_features */ };
-              break;
-          case 'land':
-              details = { size_sqm: viewRow.land_size_sqm, legal_status: viewRow.land_legal_status, intended_use: viewRow.land_intended_use, road_access: viewRow.land_road_access, water_supply: viewRow.land_water_supply, electricity_available: viewRow.land_electricity_available, fenced: viewRow.land_fenced };
-              break;
-          // ... add cases for apartment, commercial
+      switch (category) {
+        case 'house':
+          details = {
+            bedrooms: effective_bedrooms, // Use coalesced value
+            bathrooms: effective_bathrooms, // Use coalesced value
+            garages: house_garages,
+            parkings: house_parkings,
+            amenities: house_amenities,
+            security_features: house_security_features,
+          };
+          break;
+        case 'land':
+          details = {
+            size_sqm: land_size_sqm,
+            legal_status: land_legal_status,
+            intended_use: land_intended_use,
+            road_access: land_road_access,
+            water_supply: land_water_supply,
+            electricity_available: land_electricity_available,
+            fenced: land_fenced,
+          };
+          break;
+        case 'apartment':
+          details = {
+            bedrooms: effective_bedrooms, // Use coalesced value
+            bathrooms: effective_bathrooms, // Use coalesced value
+            square_meters: apt_square_meters,
+            amenities: apt_amenities,
+            parking_spaces: apt_parking_spaces,
+            security_features: apt_security_features,
+          };
+          break;
+        case 'commercial':
+          details = {
+            property_type: comm_property_type,
+            square_meters: comm_square_meters,
+            parking_spaces: comm_parking_spaces,
+            amenities: comm_amenities,
+            security_features: comm_security_features,
+          };
+          break;
       }
-       Object.keys(details).forEach(key => details[key] == null && delete details[key]);
+      // Remove null/undefined keys from details
+      Object.keys(details).forEach(
+        (key) => details[key] == null && delete details[key],
+      );
 
-
-      // Return the Property structure
+      // Construct the final Property object for the frontend
       return {
-        id: viewRow.id,
-        title: viewRow.title,
-        price: viewRow.price,
-        location: viewRow.location,
-        images: viewRow.images,
-        coordinates: viewRow.coordinates,
-        description: viewRow.description,
-        property_type: viewRow.property_type,
-        category: viewRow.category,
-        user_id: viewRow.user_id,
-        agent_id: viewRow.agent_id,
-        created_at: viewRow.created_at,
-        status: viewRow.status,
-        last_updated: viewRow.last_updated,
-        // Include base bedrooms/bathrooms ONLY if they still exist and are needed
-        // bedrooms: viewRow.effective_bedrooms, // Or keep separate
-        // bathrooms: viewRow.effective_bathrooms, // Or keep separate
-        details: Object.keys(details).length > 0 ? details : undefined, // Reconstructed details
+        id,
+        title,
+        price,
+        location,
+        images,
+        coordinates,
+        description,
+        property_type,
+        category,
+        user_id,
+        agent_id,
+        created_at,
+        status,
+        last_updated,
+        // IMPORTANT: Do NOT include base bedrooms/bathrooms here
+        details: Object.keys(details).length > 0 ? details : undefined,
         // liked: false // Needs separate logic
       } as Property;
     });
@@ -270,19 +352,16 @@ export class PropertiesService {
     };
   }
 
-  // --- Find One Method (Keep as is) ---
   async findOne(id: string): Promise<Property> {
-    // ... (your existing findOne implementation)
     if (!id) {
-      throw new BadRequestException("Property ID cannot be empty");
+      throw new BadRequestException('Property ID cannot be empty');
     }
     this.logger.log(`Finding property with ID: ${id}`);
 
-    // 1. Fetch base property + status relationship
     const { data: baseProperty, error: baseError } = await this.supabase
       .from(this.baseTableName)
-      .select("*, property_status(status, last_updated)") // Fetch status via relationship
-      .eq("id", id)
+      .select('*, property_status(status, last_updated)')
+      .eq('id', id)
       .maybeSingle();
 
     if (baseError) {
@@ -299,12 +378,8 @@ export class PropertiesService {
       throw new NotFoundException(`Property with ID ${id} not found`);
     }
 
-    // Extract status details if relationship worked
-    // Type assertion needed as Supabase types might not fully reflect relationship data
     const statusDetails = (baseProperty as any).property_status;
-    delete (baseProperty as any).property_status; // Clean up relation data
-
-    // 2. Fetch details based on category
+    delete (baseProperty as any).property_status;
     let detailsData = null;
     const detailTableName = this.getDetailTableName(baseProperty.category);
 
@@ -314,12 +389,11 @@ export class PropertiesService {
       );
       const { data: detailsResult, error: detailError } = await this.supabase
         .from(detailTableName)
-        .select("*")
-        .eq("property_id", id)
+        .select('*')
+        .eq('property_id', id)
         .maybeSingle();
 
       if (detailError) {
-        // Log error but don't necessarily fail the whole request, maybe just return without details
         this.logger.error(
           `Error fetching details from ${detailTableName} for property ${id}: ${detailError.message}`,
           detailError.stack,
@@ -332,7 +406,6 @@ export class PropertiesService {
       }
     }
 
-    // 3. Combine base, status, and details
     return {
       ...baseProperty,
       status: statusDetails?.status,
@@ -341,40 +414,31 @@ export class PropertiesService {
     } as Property;
   }
 
-  // --- Update Method (Keep as is) ---
   async update(
     id: string,
     updatePropertyDto: UpdatePropertyDto,
   ): Promise<Property> {
-    // ... (your existing update implementation)
     if (!id) {
-      throw new BadRequestException("Property ID cannot be empty");
+      throw new BadRequestException('Property ID cannot be empty');
     }
     const { details, ...baseUpdates } = updatePropertyDto;
     this.logger.log(`Attempting to update property ID: ${id}`);
 
-    // Determine current category if baseUpdates doesn't include it but details are present
     let currentCategory = baseUpdates.category;
-    if (
-      details &&
-      Object.keys(details).length > 0 &&
-      !baseUpdates.category
-    ) {
-      // Fetch current property to get category if not provided in update DTO
-      const currentProperty = await this.findOne(id); // Use findOne to get current state
+    if (details && Object.keys(details).length > 0 && !baseUpdates.category) {
+
+      const currentProperty = await this.findOne(id); 
       currentCategory = currentProperty.category;
     }
 
-    // Update base properties if any
     if (Object.keys(baseUpdates).length > 0) {
       this.logger.log(`Updating base properties for ID: ${id}`);
-      const { data: updatedBase, error: baseUpdateError } =
-        await this.supabase
-          .from(this.baseTableName)
-          .update(baseUpdates)
-          .eq("id", id)
-          .select()
-          .single();
+      const { data: updatedBase, error: baseUpdateError } = await this.supabase
+        .from(this.baseTableName)
+        .update(baseUpdates)
+        .eq('id', id)
+        .select()
+        .single();
 
       if (baseUpdateError) {
         this.logger.error(
@@ -386,7 +450,7 @@ export class PropertiesService {
         );
       }
       if (!updatedBase) {
-        // This case might indicate the ID didn't exist, though findOne should catch it earlier
+
         throw new NotFoundException(
           `Property with ID ${id} not found during base update.`,
         );
@@ -394,60 +458,44 @@ export class PropertiesService {
       this.logger.log(`Base properties updated for ID: ${id}`);
     }
 
-    // Update details properties if any and category is known
     const detailTableName = currentCategory
       ? this.getDetailTableName(currentCategory)
       : null;
 
     if (details && Object.keys(details).length > 0 && detailTableName) {
       this.logger.log(`Updating details in ${detailTableName} for ID: ${id}`);
-      // Use upsert for details? Or update? Update assumes record exists.
       const { error: detailUpdateError } = await this.supabase
         .from(detailTableName)
         .update(details)
-        .eq("property_id", id); // Match on FK
-
+        .eq('property_id', id); 
       if (detailUpdateError) {
-        // Log error, but maybe don't throw? Depends on desired behavior.
         this.logger.error(
           `Error updating details in ${detailTableName} for property ${id}: ${detailUpdateError.message}`,
           detailUpdateError.stack,
         );
-        // Consider if partial success is acceptable or if you should throw
-        // throw new InternalServerErrorException(`Failed to update property details: ${detailUpdateError.message}`);
+
       } else {
         this.logger.log(`Details updated in ${detailTableName} for ID: ${id}`);
       }
-    } else if (
-      details &&
-      Object.keys(details).length > 0 &&
-      !detailTableName
-    ) {
+    } else if (details && Object.keys(details).length > 0 && !detailTableName) {
       this.logger.warn(
         `Details provided for update on property ${id}, but no detail table found for category ${currentCategory}.`,
       );
     }
 
-    // Refetch the updated property to return the combined state
     return this.findOne(id);
   }
 
-  // --- Remove Method (Keep as is) ---
   async remove(id: string): Promise<void> {
-    // ... (your existing remove implementation)
     if (!id) {
-      throw new BadRequestException("Property ID cannot be empty");
+      throw new BadRequestException('Property ID cannot be empty');
     }
     this.logger.log(`Attempting to remove property ID: ${id}`);
 
-    // Note: RLS policies on related tables (details, status, saved_properties)
-    // and CASCADE constraints handle deletion there.
-    // We only need to delete from the base 'properties' table.
-
     const { error, count } = await this.supabase
       .from(this.baseTableName)
-      .delete({ count: "exact" }) // Get count to check if it existed
-      .eq("id", id);
+      .delete({ count: 'exact' }) 
+      .eq('id', id);
 
     if (error) {
       this.logger.error(
@@ -460,13 +508,11 @@ export class PropertiesService {
     }
 
     if (count === 0) {
-      // Changed from NotFoundException to avoid throwing if delete is idempotent
+
       this.logger.warn(
         `Property with ID ${id} not found for deletion or already deleted.`,
       );
-      // throw new NotFoundException(
-      //   `Property with ID ${id} not found for deletion.`,
-      // );
+
     } else {
       this.logger.log(`Property ID: ${id} removed successfully.`);
     }
