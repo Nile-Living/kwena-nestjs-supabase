@@ -1,5 +1,5 @@
 // src/auth/dto/auth.dto.ts
-import { IsEmail, IsString, MinLength, Matches } from 'class-validator';
+import { IsEmail, IsString, MinLength, Matches, IsIn } from 'class-validator';
 
 export class SignInDto {
   @IsEmail({}, { message: 'Please enter a valid email address.' })
@@ -14,4 +14,8 @@ export class SignUpDto extends SignInDto { // Inherits email and password valida
   @IsString()
   @Matches(/^\+[1-9]\d{1,14}$/, { message: 'Phone number must be in E.164 format (e.g., +260...).' })
   phone: string;
+
+  @IsString()
+  @IsIn(['user', 'agent'], { message: 'Invalid user type selected.'})
+  role: 'user' | 'agent';
 }
