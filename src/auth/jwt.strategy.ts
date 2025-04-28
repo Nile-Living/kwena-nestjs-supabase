@@ -1,62 +1,56 @@
-// src/auth/jwt.strategy.ts
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
-// Remove unused Supabase imports if not fetching user details here
+// You might need SupabaseClient later if fetching role in Guards/Services
 // import { SupabaseClient } from '@supabase/supabase-js';
 // import { Inject } from '@nestjs/common';
-// import { SUPABASE_CLIENT } from 'src/supabase/supabase.constants';
+// import { SUPABASE_CLIENT } from '../supabase/supabase.constants';
 
+// Interface for the data reliably inside the Supabase JWT payload
 interface JwtPayload {
-    sub: string;
-    aud: string;
-    role: string;
+    sub: string; // User ID (Subject)
+    aud: string; // Audience
+    // Note: 'role' is NOT typically included by default
     email?: string;
-    iat: number;
-    exp: number;
+    iat: number; // Issued At
+    exp: number; // Expiration Time
 }
 
-interface AuthenticatedUser {
+// Interface for the user object attached to the request after validation
+// It only contains information directly validated from the token itself.
+interface ValidatedUser {
     id: string;
-    role: string;
     email?: string;
+    // Role is removed here - it's not directly in the token
 }
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
-  // Inject ConfigService correctly
   constructor(private readonly configService: ConfigService) {
-    // --- CORRECTED PART ---
-    // Get the secret from the *injected instance* before calling super()
     const secretOrKey = configService.get<string>('SUPABASE_JWT_SECRET');
-
-    // Check if the secret was actually retrieved
     if (!secretOrKey) {
-      // Throw error during initialization if secret is missing
-      throw new Error('SUPABASE_JWT_SECRET is not defined in environment variables or ConfigService failed to load it.');
+      throw new Error('SUPABASE_JWT_SECRET is not defined.');
     }
-    // --- END CORRECTION ---
 
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: secretOrKey, // Pass the retrieved secret here
+      secretOrKey: secretOrKey,
     });
-
   }
 
-  async validate(payload: JwtPayload): Promise<AuthenticatedUser> {
+  async validate(payload: JwtPayload): Promise<ValidatedUser> {
     if (!payload.sub) {
-      // Corrected typo: Missing
       throw new UnauthorizedException('Invalid token: Missing subject (sub).');
     }
 
-    const user: AuthenticatedUser = {
+    const user: ValidatedUser = {
       id: payload.sub,
-      role: payload.role,
-      email: payload.email,
+      email: payload.email, 
     };
+
+
     return user;
   }
 }

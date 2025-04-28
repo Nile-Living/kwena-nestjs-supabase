@@ -127,6 +127,15 @@ export class PropertiesService {
     const from = offset;
     const to = offset + pageSize - 1;
 
+    if (from < 0 || to < from) {
+      return {
+        properties: [],
+        total: 0,
+        page: Number(page),
+        pageSize: Number(pageSize),
+      };
+    }
+
     let query = this.supabase
       .from('properties_view') // Query the view directly
       .select('*', { count: 'exact' }); // Select all view columns, get total count
@@ -219,6 +228,15 @@ export class PropertiesService {
 
     // Execute Query
     const { data, error, count } = await query;
+
+    if (error?.code === 'PGRST103') {
+      return {
+        properties: [],
+        total: 0,
+        page: Number(page),
+        pageSize: Number(pageSize),
+      };
+    }
 
     if (error) {
       this.logger.error(
@@ -426,8 +444,7 @@ export class PropertiesService {
 
     let currentCategory = baseUpdates.category;
     if (details && Object.keys(details).length > 0 && !baseUpdates.category) {
-
-      const currentProperty = await this.findOne(id); 
+      const currentProperty = await this.findOne(id);
       currentCategory = currentProperty.category;
     }
 
@@ -450,7 +467,6 @@ export class PropertiesService {
         );
       }
       if (!updatedBase) {
-
         throw new NotFoundException(
           `Property with ID ${id} not found during base update.`,
         );
@@ -467,13 +483,12 @@ export class PropertiesService {
       const { error: detailUpdateError } = await this.supabase
         .from(detailTableName)
         .update(details)
-        .eq('property_id', id); 
+        .eq('property_id', id);
       if (detailUpdateError) {
         this.logger.error(
           `Error updating details in ${detailTableName} for property ${id}: ${detailUpdateError.message}`,
           detailUpdateError.stack,
         );
-
       } else {
         this.logger.log(`Details updated in ${detailTableName} for ID: ${id}`);
       }
@@ -494,7 +509,7 @@ export class PropertiesService {
 
     const { error, count } = await this.supabase
       .from(this.baseTableName)
-      .delete({ count: 'exact' }) 
+      .delete({ count: 'exact' })
       .eq('id', id);
 
     if (error) {
@@ -508,11 +523,9 @@ export class PropertiesService {
     }
 
     if (count === 0) {
-
       this.logger.warn(
         `Property with ID ${id} not found for deletion or already deleted.`,
       );
-
     } else {
       this.logger.log(`Property ID: ${id} removed successfully.`);
     }
