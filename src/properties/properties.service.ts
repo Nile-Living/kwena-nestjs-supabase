@@ -22,7 +22,6 @@ export class PropertiesService {
     @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient,
   ) {}
 
-  // --- Helper to get detail table name (Keep as is) ---
   private getDetailTableName(category: string): string | null {
     const validCategories = ['house', 'land', 'apartment', 'commercial'];
     if (validCategories.includes(category)) {
@@ -32,15 +31,12 @@ export class PropertiesService {
     return null;
   }
 
-  // --- Create Method (Keep as is) ---
   async create(createPropertyDto: CreatePropertyDto): Promise<Property> {
-    // ... (your existing create implementation)
     const { details, ...baseData } = createPropertyDto;
     this.logger.log(
       `Attempting to create base property for category: ${baseData.category}`,
     );
 
-    // 1. Insert into base 'properties' table
     const { data: newBaseProperty, error: baseError } = await this.supabase
       .from(this.baseTableName)
       .insert(baseData)
@@ -58,7 +54,6 @@ export class PropertiesService {
     }
     this.logger.log(`Base property created with ID: ${newBaseProperty.id}`);
 
-    // 2. Insert into category-specific details table
     const detailTableName = this.getDetailTableName(baseData.category);
     if (details && Object.keys(details).length > 0 && detailTableName) {
       this.logger.log(
@@ -66,14 +61,13 @@ export class PropertiesService {
       );
       const { error: detailError } = await this.supabase
         .from(detailTableName)
-        .insert({ ...details, property_id: newBaseProperty.id }); // Add the FK
+        .insert({ ...details, property_id: newBaseProperty.id });
 
       if (detailError) {
         this.logger.error(
           `Error inserting details into ${detailTableName}: ${detailError.message}. Rolling back base property.`,
           detailError.stack,
         );
-        // Attempt to clean up the orphaned base property record
         await this.supabase
           .from(this.baseTableName)
           .delete()
@@ -92,32 +86,30 @@ export class PropertiesService {
     return newBaseProperty as Property;
   }
 
-  // --- Find All Method (MODIFIED) ---
-  // --- Find All Method (Using View) ---
   async findAll(queryDto: QueryPropertyDto): Promise<PropertyResponseDto> {
     const {
       page = 1,
       pageSize = 10,
-      sort = 'created_at.desc', // Default sort on view column
+      sort = 'created_at.desc',
       category,
       propertyType,
       location,
       minPrice,
       maxPrice,
-      bedrooms, // Corresponds to effective_bedrooms
-      bathrooms, // Corresponds to effective_bathrooms
-      garages, // Corresponds to effective_garages
-      house_parkings, // Corresponds to effective_house_parkings
-      min_size_sqm, // Corresponds to land_size_sqm or effective_square_meters
-      max_size_sqm, // Corresponds to land_size_sqm or effective_square_meters
-      legal_status, // Corresponds to land_legal_status
-      intended_use, // Corresponds to land_intended_use
-      road_access, // Corresponds to land_road_access
-      water_supply, // Corresponds to land_water_supply
-      electricity_available, // Corresponds to land_electricity_available
-      fenced, // Corresponds to land_fenced
-      parking_spaces, // Corresponds to effective_parking_spaces
-      commercial_property_type, // Corresponds to commercial_property_type_detail
+      bedrooms,
+      bathrooms,
+      garages,
+      house_parkings,
+      min_size_sqm,
+      max_size_sqm,
+      legal_status,
+      intended_use,
+      road_access,
+      water_supply,
+      electricity_available,
+      fenced,
+      parking_spaces,
+      commercial_property_type,
       status,
       user_id,
       agent_id,
@@ -137,33 +129,28 @@ export class PropertiesService {
     }
 
     let query = this.supabase
-      .from('properties_view') // Query the view directly
-      .select('*', { count: 'exact' }); // Select all view columns, get total count
+      .from('properties_view')
+      .select('*', { count: 'exact' });
 
-    // Apply Filters directly on view columns
     if (category) query = query.eq('category', category);
-    if (propertyType) query = query.eq('property_type', propertyType); // Base property_type
+    if (propertyType) query = query.eq('property_type', propertyType);
     if (location) query = query.ilike('location', `%${location}%`);
     if (minPrice !== undefined) query = query.gte('price', minPrice);
     if (maxPrice !== undefined) query = query.lte('price', maxPrice);
     if (user_id) query = query.eq('user_id', user_id);
     if (agent_id) query = query.eq('agent_id', agent_id);
     if (status && status !== 'all') query = query.eq('status', status);
-
-    // Filters on coalesced/detail fields from the view
     if (bedrooms !== undefined)
       query = query.gte('effective_bedrooms', bedrooms);
     if (bathrooms !== undefined)
       query = query.gte('effective_bathrooms', bathrooms);
-    if (garages !== undefined) query = query.gte('effective_garages', garages); // House only via view logic
+    if (garages !== undefined) query = query.gte('effective_garages', garages);
     if (house_parkings !== undefined)
-      query = query.gte('effective_house_parkings', house_parkings); // House only via view logic
+      query = query.gte('effective_house_parkings', house_parkings);
     if (parking_spaces !== undefined)
-      query = query.gte('effective_parking_spaces', parking_spaces); // Apt/Comm via view logic
-
-    // Land filters (use specific view columns)
+      query = query.gte('effective_parking_spaces', parking_spaces);
     if (min_size_sqm !== undefined)
-      query = query.gte('land_size_sqm', min_size_sqm); // Assuming view has land_size_sqm
+      query = query.gte('land_size_sqm', min_size_sqm);
     if (max_size_sqm !== undefined)
       query = query.lte('land_size_sqm', max_size_sqm);
     if (legal_status) query = query.eq('land_legal_status', legal_status);
@@ -174,22 +161,19 @@ export class PropertiesService {
     if (electricity_available !== undefined)
       query = query.eq('land_electricity_available', electricity_available);
     if (fenced !== undefined) query = query.eq('land_fenced', fenced);
-
-    // Commercial filters
     if (commercial_property_type)
       query = query.eq(
         'commercial_property_type_detail',
         commercial_property_type,
       );
-    // Add square meter filters if needed, using effective_square_meters
 
-    // Apply Sorting on view columns
+    query = query.order('is_promoted', { ascending: false });
+
     try {
       const [sortFieldInput, sortOrderInput = 'desc'] = sort.split('.');
       const sortOrder = sortOrderInput.toLowerCase() === 'asc' ? 'asc' : 'desc';
       let sortColumn = sortFieldInput;
 
-      // Map DTO sort fields to view column names if necessary
       const sortColumnMapping: Record<string, string> = {
         created_at: 'created_at',
         price: 'price',
@@ -197,19 +181,18 @@ export class PropertiesService {
         bedrooms: 'effective_bedrooms',
         bathrooms: 'effective_bathrooms',
         garages: 'effective_garages',
-        parkings: 'effective_house_parkings', // Or decide which parking to sort by default
+        parkings: 'effective_house_parkings',
         parking_spaces: 'effective_parking_spaces',
-        size_sqm: 'land_size_sqm', // Or effective_square_meters
+        size_sqm: 'land_size_sqm',
         square_meters: 'effective_square_meters',
         status: 'status',
-        // Add other mappings as needed
       };
 
-      sortColumn = sortColumnMapping[sortFieldInput] || 'created_at'; // Default to created_at if mapping fails
+      sortColumn = sortColumnMapping[sortFieldInput] || 'created_at';
 
       query = query.order(sortColumn, {
         ascending: sortOrder === 'asc',
-        nullsFirst: false, // Or true, depending on desired behavior
+        nullsFirst: false,
       });
     } catch (e) {
       this.logger.warn(
@@ -221,12 +204,10 @@ export class PropertiesService {
       });
     }
 
-    // Apply Pagination
     query = query.range(from, to);
 
     this.logger.log(`Executing Supabase query for properties view`);
 
-    // Execute Query
     const { data, error, count } = await query;
 
     if (error?.code === 'PGRST103') {
@@ -249,7 +230,6 @@ export class PropertiesService {
     }
 
     const properties: Property[] = (data || []).map((viewRow: any) => {
-      // Destructure ALL fields from the view
       const {
         effective_bedrooms,
         effective_bathrooms,
@@ -273,7 +253,6 @@ export class PropertiesService {
         comm_parking_spaces,
         comm_amenities,
         comm_security_features,
-        // Base fields that are still present
         id,
         title,
         price,
@@ -286,18 +265,18 @@ export class PropertiesService {
         user_id,
         agent_id,
         created_at,
-        // Status fields
         status,
         last_updated,
+        is_promoted, // Include is_promoted from view
+        promotion_expires_at, // Include expiry if needed
       } = viewRow;
 
-      // Reconstruct details object based on category
       let details: any = {};
       switch (category) {
         case 'house':
           details = {
-            bedrooms: effective_bedrooms, // Use coalesced value
-            bathrooms: effective_bathrooms, // Use coalesced value
+            bedrooms: effective_bedrooms,
+            bathrooms: effective_bathrooms,
             garages: house_garages,
             parkings: house_parkings,
             amenities: house_amenities,
@@ -317,8 +296,8 @@ export class PropertiesService {
           break;
         case 'apartment':
           details = {
-            bedrooms: effective_bedrooms, // Use coalesced value
-            bathrooms: effective_bathrooms, // Use coalesced value
+            bedrooms: effective_bedrooms,
+            bathrooms: effective_bathrooms,
             square_meters: apt_square_meters,
             amenities: apt_amenities,
             parking_spaces: apt_parking_spaces,
@@ -335,12 +314,10 @@ export class PropertiesService {
           };
           break;
       }
-      // Remove null/undefined keys from details
       Object.keys(details).forEach(
         (key) => details[key] == null && delete details[key],
       );
 
-      // Construct the final Property object for the frontend
       return {
         id,
         title,
@@ -356,15 +333,14 @@ export class PropertiesService {
         created_at,
         status,
         last_updated,
-        // IMPORTANT: Do NOT include base bedrooms/bathrooms here
         details: Object.keys(details).length > 0 ? details : undefined,
-        // liked: false // Needs separate logic
+        is_promoted, // Add is_promoted flag
       } as Property;
     });
 
     return {
       properties,
-      total: count ?? 0, // Use the count returned by Supabase
+      total: count ?? 0,
       page: Number(page),
       pageSize: Number(pageSize),
     };
@@ -417,7 +393,7 @@ export class PropertiesService {
           detailError.stack,
         );
       } else if (detailsResult) {
-        const { property_id, ...restOfDetails } = detailsResult; // Exclude FK
+        const { property_id, ...restOfDetails } = detailsResult;
         if (Object.keys(restOfDetails).length > 0) {
           detailsData = restOfDetails;
         }

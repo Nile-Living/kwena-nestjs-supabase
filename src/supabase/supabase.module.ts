@@ -13,9 +13,7 @@ import { SUPABASE_CLIENT } from './supabase.constants';
         const logger = new Logger('SupabaseModule');
         const supabaseUrl = ConfigService.get<string>('SUPABASE_URL');
         const supabaseKey = ConfigService.get<string>('SUPABASE_ANON_KEY');
-        const supabaseServiceKey = ConfigService.get<string>(
-          "SUPABASE_SERVICE_ROLE_KEY", // <-- Use the service key variable name
-        );
+        const supabaseServiceKey = ConfigService.get<string>("SUPABASE_SERVICE_ROLE_KEY");
 
         if (!supabaseUrl || !supabaseKey || !supabaseServiceKey) {
           logger.error(
