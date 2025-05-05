@@ -22,6 +22,7 @@ import { PromotionsModule } from './promotions/promotions.module';
     SavedPropertiesModule,
     LencoModule,
     PromotionsModule,
+    SavedPropertiesModule
   ],
   controllers: [AppController],
   providers: [AppService],

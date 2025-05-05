@@ -31,6 +31,103 @@ export class PropertiesService {
     return null;
   }
 
+  async findPromoted(): Promise<Property[]> {
+    this.logger.log('Fetching promoted properties');
+    const { data, error } = await this.supabase
+      .from('properties_view')
+      .select('*')
+      .eq('is_promoted', true)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      this.logger.error(`Error fetching promoted properties: ${error.message}`);
+      throw new InternalServerErrorException(
+        'Failed to retrieve promoted properties',
+      );
+    }
+
+    const mappedProperties: Property[] = (data || []).map((viewRow) => {
+      // --- Start: Reuse mapping logic from findAll ---
+      const {
+        effective_bedrooms,
+        effective_bathrooms,
+        house_garages,
+        house_parkings,
+        house_amenities,
+        house_security_features,
+        land_size_sqm,
+        land_legal_status,
+        land_intended_use,
+        land_road_access,
+        land_water_supply,
+        land_electricity_available,
+        land_fenced,
+        apt_square_meters,
+        apt_amenities,
+        apt_parking_spaces,
+        apt_security_features,
+        comm_property_type,
+        comm_square_meters,
+        comm_parking_spaces,
+        comm_amenities,
+        comm_security_features,
+        id,
+        title,
+        price,
+        location,
+        images,
+        coordinates,
+        description,
+        property_type,
+        category,
+        user_id,
+        agent_id,
+        created_at,
+        status,
+        last_updated,
+        is_promoted,
+        promotion_expires_at, // Keep if needed, otherwise remove
+      } = viewRow;
+
+      let details: any = {};
+      switch (category) {
+        case 'house':
+          details = { bedrooms: effective_bedrooms, bathrooms: effective_bathrooms, garages: house_garages, parkings: house_parkings, amenities: house_amenities, security_features: house_security_features };
+          break;
+        case 'land':
+          details = { size_sqm: land_size_sqm, legal_status: land_legal_status, intended_use: land_intended_use, road_access: land_road_access, water_supply: land_water_supply, electricity_available: land_electricity_available, fenced: land_fenced };
+          break;
+        case 'apartment':
+          details = { bedrooms: effective_bedrooms, bathrooms: effective_bathrooms, square_meters: apt_square_meters, amenities: apt_amenities, parking_spaces: apt_parking_spaces, security_features: apt_security_features };
+          break;
+        case 'commercial':
+          details = { property_type: comm_property_type, square_meters: comm_square_meters, parking_spaces: comm_parking_spaces, amenities: comm_amenities, security_features: comm_security_features };
+          break;
+      }
+      Object.keys(details).forEach(
+        (key) => details[key] == null && delete details[key],
+      );
+
+      return {
+        id, title, price, location, images, coordinates, description, property_type, category, user_id, agent_id, created_at, status, last_updated,
+        details: Object.keys(details).length > 0 ? details : undefined,
+        is_promoted,
+      } as Property;
+      // --- End: Reuse mapping logic ---
+    });
+
+    // --- Add Deduplication Logic ---
+    const uniquePropertiesMap = new Map<string, Property>();
+    mappedProperties.forEach((p) => {
+      uniquePropertiesMap.set(p.id, p); // Map ensures uniqueness by ID
+    });
+    const uniquePropertiesArray = Array.from(uniquePropertiesMap.values());
+    // --- End Deduplication Logic ---
+
+    this.logger.log(`Returning ${uniquePropertiesArray.length} unique promoted properties.`);
+    return uniquePropertiesArray; // Return the deduplicated array
+  }
+
   async create(createPropertyDto: CreatePropertyDto): Promise<Property> {
     const { details, ...baseData } = createPropertyDto;
     this.logger.log(

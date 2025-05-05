@@ -6,7 +6,7 @@ import {
     Body,
     Param,
     Delete,
-    Put, // Changed from Patch if you expect full replacement, use Patch for partial
+    Put,
     Query,
     HttpCode,
     HttpStatus,
@@ -28,7 +28,6 @@ import {
     @Post()
     @HttpCode(HttpStatus.CREATED)
     create(@Body() createPropertyDto: CreatePropertyDto): Promise<Property> {
-      // Validation is handled by the global ValidationPipe
       return this.propertiesService.create(createPropertyDto);
     }
   
@@ -37,15 +36,12 @@ import {
     findAll(
       @Query() queryDto: QueryPropertyDto,
     ): Promise<PropertyResponseDto> {
-      // Validation/transformation of query params handled by ValidationPipe
       return this.propertiesService.findAll(queryDto);
     }
   
-    // Optional: Get one specific property
     @Get(":id")
     @HttpCode(HttpStatus.OK)
     findOne(
-       // Use ParseUUIDPipe if 'id' is a UUID, otherwise just string
       @Param("id" /*, ParseUUIDPipe */) id: string
     ): Promise<Property> {
       return this.propertiesService.findOne(id);
@@ -64,6 +60,12 @@ import {
     @HttpCode(HttpStatus.NO_CONTENT) // Standard for successful DELETE
     remove(@Param("id" /*, ParseUUIDPipe */) id: string): Promise<void> {
       return this.propertiesService.remove(id);
+    }
+
+    @Get('promoted')
+    @HttpCode(HttpStatus.OK)
+    findPromoted(): Promise<Property[]> {
+      return this.propertiesService.findPromoted();
     }
   }
   

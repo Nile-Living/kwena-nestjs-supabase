@@ -6,12 +6,12 @@ import {
   import { SavedPropertiesService } from './saved-properties.services';
   import { AuthGuard } from '@nestjs/passport'; // Assuming JWT strategy is named 'jwt'
   import { SavePropertyDto } from './dto/save-property.dto';
+  import { Property } from 'src/properties/dto/property.response.dto';
 
   interface AuthenticatedUser {
     id: string;
   }
   
-  // Define an interface for the request object with the user property
   interface RequestWithUser extends Request { // Use 'Request' from @nestjs/common
     user: AuthenticatedUser;
   }
@@ -33,6 +33,16 @@ import {
       const savedIds = await this.savedPropertiesService.findSavedPropertyIds(userId);
       // Return in the format expected by the frontend store
       return { savedPropertyIds: savedIds };
+    }
+
+    @Get('details') // Handles GET /api/users/me/saved-properties/details
+    @HttpCode(HttpStatus.OK)
+    async getSavedPropertiesWithDetails(@Req() req: RequestWithUser): Promise<Property[]> {
+       if (!req.user || !req.user.id) {
+          throw new InternalServerErrorException('User information not found on request.');
+      }
+      const userId = req.user.id;
+      return this.savedPropertiesService.findSavedPropertyDetails(userId);
     }
   
     @Post()
