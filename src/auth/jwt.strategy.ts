@@ -1,36 +1,32 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
-import { PassportStrategy } from '@nestjs/passport';
-import { ExtractJwt, Strategy } from 'passport-jwt';
-import { ConfigService } from '@nestjs/config';
-// You might need SupabaseClient later if fetching role in Guards/Services
-// import { SupabaseClient } from '@supabase/supabase-js';
-// import { Inject } from '@nestjs/common';
-// import { SUPABASE_CLIENT } from '../supabase/supabase.constants';
+// src/auth/jwt.strategy.ts (NestJS)
+import { Injectable, UnauthorizedException } from "@nestjs/common";
+import { PassportStrategy } from "@nestjs/passport";
+import { ExtractJwt, Strategy } from "passport-jwt";
+import { ConfigService } from "@nestjs/config";
 
-// Interface for the data reliably inside the Supabase JWT payload
 interface JwtPayload {
-    sub: string; // User ID (Subject)
-    aud: string; // Audience
-    // Note: 'role' is NOT typically included by default
-    email?: string;
-    iat: number; // Issued At
-    exp: number; // Expiration Time
+  sub: string;
+  aud: string;
+  email?: string;
+  iat: number;
+  exp: number;
+  role?: string;
+  app_metadata?: { [key: string]: any };
+  user_metadata?: { [key: string]: any };
 }
 
-// Interface for the user object attached to the request after validation
-// It only contains information directly validated from the token itself.
 interface ValidatedUser {
-    id: string;
-    email?: string;
-    // Role is removed here - it's not directly in the token
+  id: string;
+  email?: string;
+  role?: string;
 }
 
 @Injectable()
-export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
+export class JwtStrategy extends PassportStrategy(Strategy, "jwt") {
   constructor(private readonly configService: ConfigService) {
-    const secretOrKey = configService.get<string>('SUPABASE_JWT_SECRET');
+    const secretOrKey = configService.get<string>("SUPABASE_JWT_SECRET");
     if (!secretOrKey) {
-      throw new Error('SUPABASE_JWT_SECRET is not defined.');
+      throw new Error("SUPABASE_JWT_SECRET is not defined.");
     }
 
     super({
@@ -42,14 +38,14 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
 
   async validate(payload: JwtPayload): Promise<ValidatedUser> {
     if (!payload.sub) {
-      throw new UnauthorizedException('Invalid token: Missing subject (sub).');
+      throw new UnauthorizedException("Invalid token: Missing subject (sub).");
     }
 
     const user: ValidatedUser = {
       id: payload.sub,
-      email: payload.email, 
+      email: payload.email,
+      role: payload.role || payload.app_metadata?.role || payload.user_metadata?.role,
     };
-
 
     return user;
   }

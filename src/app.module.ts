@@ -8,6 +8,7 @@ import { AuthModule } from './auth/auth.module';
 import { SavedPropertiesModule } from './users/saved-properties/saved-properties.module';
 import { LencoModule } from './lenco/lenco.module';
 import { PromotionsModule } from './promotions/promotions.module';
+import { ProfilesModule } from './profiles/profiles.module';
 
 
 @Module({
@@ -22,7 +23,8 @@ import { PromotionsModule } from './promotions/promotions.module';
     SavedPropertiesModule,
     LencoModule,
     PromotionsModule,
-    SavedPropertiesModule
+    SavedPropertiesModule,
+    ProfilesModule
   ],
   controllers: [AppController],
   providers: [AppService],
