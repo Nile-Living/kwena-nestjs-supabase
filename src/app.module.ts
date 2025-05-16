@@ -9,6 +9,7 @@ import { SavedPropertiesModule } from './users/saved-properties/saved-properties
 import { LencoModule } from './lenco/lenco.module';
 import { PromotionsModule } from './promotions/promotions.module';
 import { ProfilesModule } from './profiles/profiles.module';
+import { CloudinaryModule } from './cloudinary/cloudinary.module';
 
 
 @Module({
@@ -24,7 +25,8 @@ import { ProfilesModule } from './profiles/profiles.module';
     LencoModule,
     PromotionsModule,
     SavedPropertiesModule,
-    ProfilesModule
+    ProfilesModule,
+    CloudinaryModule
   ],
   controllers: [AppController],
   providers: [AppService],

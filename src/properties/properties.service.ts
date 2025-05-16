@@ -12,6 +12,7 @@ import { CreatePropertyDto } from './dto/create-property.dto';
 import { QueryPropertyDto } from './dto/query-property.dto';
 import { PropertyResponseDto, Property } from './dto/property.response.dto';
 import { UpdatePropertyDto } from './dto/update-property.dto';
+import { CloudinaryService } from '../cloudinary/cloudinary.service';
 
 @Injectable()
 export class PropertiesService {
@@ -20,6 +21,7 @@ export class PropertiesService {
 
   constructor(
     @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient,
+    private readonly cloudinaryService: CloudinaryService,
   ) {}
 
   private getDetailTableName(category: string): string | null {
@@ -47,7 +49,6 @@ export class PropertiesService {
     }
 
     const mappedProperties: Property[] = (data || []).map((viewRow) => {
-      // --- Start: Reuse mapping logic from findAll ---
       const {
         effective_bedrooms,
         effective_bathrooms,
@@ -86,7 +87,6 @@ export class PropertiesService {
         status,
         last_updated,
         is_promoted,
-        promotion_expires_at, // Keep if needed, otherwise remove
       } = viewRow;
 
       let details: any = {};
@@ -113,26 +113,39 @@ export class PropertiesService {
         details: Object.keys(details).length > 0 ? details : undefined,
         is_promoted,
       } as Property;
-      // --- End: Reuse mapping logic ---
     });
-
-    // --- Add Deduplication Logic ---
     const uniquePropertiesMap = new Map<string, Property>();
     mappedProperties.forEach((p) => {
-      uniquePropertiesMap.set(p.id, p); // Map ensures uniqueness by ID
+      uniquePropertiesMap.set(p.id, p);
     });
     const uniquePropertiesArray = Array.from(uniquePropertiesMap.values());
-    // --- End Deduplication Logic ---
-
     this.logger.log(`Returning ${uniquePropertiesArray.length} unique promoted properties.`);
-    return uniquePropertiesArray; // Return the deduplicated array
+    return uniquePropertiesArray;
   }
 
-  async create(createPropertyDto: CreatePropertyDto): Promise<Property> {
+  async create(
+    createPropertyDto: CreatePropertyDto,
+    files?: Array<Express.Multer.File>,
+  ): Promise<Property> {
     const { details, ...baseData } = createPropertyDto;
     this.logger.log(
       `Attempting to create base property for category: ${baseData.category}`,
     );
+
+    const uploadedImageUrls: string[] = [];
+    if (files && files.length > 0) {
+      this.logger.log(`Uploading ${files.length} images to Cloudinary.`);
+      for (const file of files) {
+        try {
+          const uploadResult = await this.cloudinaryService.uploadImage(file);
+          uploadedImageUrls.push(uploadResult.secure_url);
+        } catch (error: any) {
+          this.logger.error(`Failed to upload image: ${error.message}`, error.stack);
+          throw new InternalServerErrorException(`Image upload failed: ${error.message}`);
+        }
+      }
+    }
+    baseData.images = uploadedImageUrls;
 
     const { data: newBaseProperty, error: baseError } = await this.supabase
       .from(this.baseTableName)
@@ -145,6 +158,16 @@ export class PropertiesService {
         `Error creating base property: ${baseError?.message}`,
         baseError?.stack,
       );
+      if (uploadedImageUrls.length > 0) {
+        this.logger.warn('Rolling back Cloudinary uploads due to DB error.');
+        for (const url of uploadedImageUrls) {
+            const publicId = this.cloudinaryService.getPublicIdFromUrl(url);
+            if (publicId) {
+                try { await this.cloudinaryService.deleteImage(publicId); }
+                catch (e: any) { this.logger.error(`Failed to delete rolled back image ${publicId}: ${e.message}`);}
+            }
+        }
+      }
       throw new InternalServerErrorException(
         `Failed to create base property: ${baseError?.message || 'Unknown error'}`,
       );
@@ -162,13 +185,22 @@ export class PropertiesService {
 
       if (detailError) {
         this.logger.error(
-          `Error inserting details into ${detailTableName}: ${detailError.message}. Rolling back base property.`,
+          `Error inserting details into ${detailTableName}: ${detailError.message}. Rolling back base property and Cloudinary uploads.`,
           detailError.stack,
         );
         await this.supabase
           .from(this.baseTableName)
           .delete()
           .eq('id', newBaseProperty.id);
+        if (uploadedImageUrls.length > 0) {
+            for (const url of uploadedImageUrls) {
+                const publicId = this.cloudinaryService.getPublicIdFromUrl(url);
+                if (publicId) {
+                    try { await this.cloudinaryService.deleteImage(publicId); }
+                    catch (e: any) { this.logger.error(`Failed to delete rolled back image ${publicId}: ${e.message}`);}
+                }
+            }
+        }
         throw new InternalServerErrorException(
           `Failed to insert property details: ${detailError.message}`,
         );
@@ -180,7 +212,7 @@ export class PropertiesService {
       );
     }
 
-    return newBaseProperty as Property;
+    return this.findOne(newBaseProperty.id);
   }
 
   async findAll(queryDto: QueryPropertyDto): Promise<PropertyResponseDto> {
@@ -302,9 +334,7 @@ export class PropertiesService {
     }
 
     query = query.range(from, to);
-
     this.logger.log(`Executing Supabase query for properties view`);
-
     const { data, error, count } = await query;
 
     if (error?.code === 'PGRST103') {
@@ -364,8 +394,7 @@ export class PropertiesService {
         created_at,
         status,
         last_updated,
-        is_promoted, // Include is_promoted from view
-        promotion_expires_at, // Include expiry if needed
+        is_promoted,
       } = viewRow;
 
       let details: any = {};
@@ -431,7 +460,7 @@ export class PropertiesService {
         status,
         last_updated,
         details: Object.keys(details).length > 0 ? details : undefined,
-        is_promoted, // Add is_promoted flag
+        is_promoted,
       } as Property;
     });
 
@@ -508,18 +537,54 @@ export class PropertiesService {
   async update(
     id: string,
     updatePropertyDto: UpdatePropertyDto,
+    newFiles?: Array<Express.Multer.File>,
   ): Promise<Property> {
     if (!id) {
       throw new BadRequestException('Property ID cannot be empty');
     }
-    const { details, ...baseUpdates } = updatePropertyDto;
+    const { details, existingImageUrls = [], deletedImagePublicIds = [], ...baseUpdates } = updatePropertyDto;
     this.logger.log(`Attempting to update property ID: ${id}`);
 
-    let currentCategory = baseUpdates.category;
-    if (details && Object.keys(details).length > 0 && !baseUpdates.category) {
-      const currentProperty = await this.findOne(id);
-      currentCategory = currentProperty.category;
+    const currentProperty = await this.findOne(id);
+    if (!currentProperty) {
+      throw new NotFoundException(`Property with ID ${id} not found.`);
     }
+
+    let finalImageUrls: string[] = Array.isArray(existingImageUrls) ? [...existingImageUrls] : (currentProperty.images || []);
+
+
+    if (deletedImagePublicIds && deletedImagePublicIds.length > 0) {
+      this.logger.log(`Deleting ${deletedImagePublicIds.length} images from Cloudinary.`);
+      for (const publicId of deletedImagePublicIds) {
+        try {
+          await this.cloudinaryService.deleteImage(publicId);
+          finalImageUrls = finalImageUrls.filter(url => {
+            const pid = this.cloudinaryService.getPublicIdFromUrl(url);
+            return pid !== publicId;
+          });
+        } catch (error: any) {
+          this.logger.error(`Failed to delete image ${publicId} from Cloudinary: ${error.message}`);
+        }
+      }
+    }
+
+    const newUploadedUrls: string[] = [];
+    if (newFiles && newFiles.length > 0) {
+      this.logger.log(`Uploading ${newFiles.length} new images to Cloudinary.`);
+      for (const file of newFiles) {
+        try {
+          const uploadResult = await this.cloudinaryService.uploadImage(file);
+          newUploadedUrls.push(uploadResult.secure_url);
+        } catch (error: any) {
+          this.logger.error(`Failed to upload new image: ${error.message}`);
+          throw new InternalServerErrorException(`New image upload failed: ${error.message}`);
+        }
+      }
+    }
+    finalImageUrls = [...finalImageUrls, ...newUploadedUrls];
+    (baseUpdates as any).images = finalImageUrls;
+
+    let currentCategory = (baseUpdates as any).category || currentProperty.category;
 
     if (Object.keys(baseUpdates).length > 0) {
       this.logger.log(`Updating base properties for ID: ${id}`);
@@ -580,6 +645,21 @@ export class PropertiesService {
     }
     this.logger.log(`Attempting to remove property ID: ${id}`);
 
+    const propertyToRemove = await this.findOne(id);
+    if (propertyToRemove && propertyToRemove.images && propertyToRemove.images.length > 0) {
+      this.logger.log(`Deleting ${propertyToRemove.images.length} images from Cloudinary for property ${id}.`);
+      for (const imageUrl of propertyToRemove.images) {
+        const publicId = this.cloudinaryService.getPublicIdFromUrl(imageUrl);
+        if (publicId) {
+          try {
+            await this.cloudinaryService.deleteImage(publicId);
+          } catch (error: any) {
+            this.logger.error(`Failed to delete image ${publicId} from Cloudinary: ${error.message}`);
+          }
+        }
+      }
+    }
+
     const { error, count } = await this.supabase
       .from(this.baseTableName)
       .delete({ count: 'exact' })
@@ -599,6 +679,7 @@ export class PropertiesService {
       this.logger.warn(
         `Property with ID ${id} not found for deletion or already deleted.`,
       );
+       throw new NotFoundException(`Property with ID ${id} not found for deletion.`);
     } else {
       this.logger.log(`Property ID: ${id} removed successfully.`);
     }
