@@ -7,22 +7,17 @@ import {
   IsInt,
   Min,
   ValidateNested,
-  IsDateString,
   IsBoolean,
   IsIn,
   IsPositive,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 import { CoordinatesDto } from './coordinates.dto';
 
+// --- Detail DTOs (kept within this file as per your structure) ---
 const allowedCommercialSubTypes = [
-  'Office',
-  'Retail',
-  'Warehouse',
-  'Industrial',
-  'Mixed-Use',
-  'Restaurant',
-  'Other',
+  'Office', 'Retail', 'Warehouse', 'Industrial',
+  'Mixed-Use', 'Restaurant', 'Other',
 ];
 
 export class CreateHouseDetailsDto {
@@ -31,10 +26,7 @@ export class CreateHouseDetailsDto {
   @IsOptional() @IsInt() @Min(0) garages?: number;
   @IsOptional() @IsInt() @Min(0) parkings?: number;
   @IsOptional() @IsArray() @IsString({ each: true }) amenities?: string[];
-  @IsOptional()
-  @IsArray()
-  @IsString({ each: true })
-  security_features?: string[];
+  @IsOptional() @IsArray() @IsString({ each: true }) security_features?: string[];
 }
 
 export class CreateLandDetailsDto {
@@ -48,92 +40,73 @@ export class CreateLandDetailsDto {
 }
 
 export class CreateApartmentDetailsDto {
-  @IsInt()
-  @Min(1, { message: 'Apartment must have at least 1 bedroom' })
-  bedrooms: number;
-  @IsInt()
-  @Min(1, { message: 'Apartment must have at least 1 bathroom' })
-  bathrooms: number;
+  @IsInt() @Min(1, { message: 'Apartment must have at least 1 bedroom' }) bedrooms: number;
+  @IsInt() @Min(1, { message: 'Apartment must have at least 1 bathroom' }) bathrooms: number;
   @IsNumber({}, { message: 'Square meters must be a number.' })
-  @IsPositive({ message: 'Square meters must be a positive value.' })
-  square_meters: number;
-
-  @IsOptional()
-  @IsArray()
-  @IsString({ each: true, message: 'Each amenity must be a string.' })
-  amenities?: string[];
-
-  @IsOptional()
-  @IsInt({ message: 'Parking spaces must be an integer.' })
-  @Min(0, { message: 'Parking spaces cannot be negative.' })
-  parking_spaces?: number;
-
-  @IsOptional()
-  @IsArray()
-  @IsString({ each: true, message: 'Each security feature must be a string.' })
-  security_features?: string[];
+  @IsPositive({ message: 'Square meters must be a positive value.' }) square_meters: number;
+  @IsOptional() @IsArray() @IsString({ each: true, message: 'Each amenity must be a string.' }) amenities?: string[];
+  @IsOptional() @IsInt({ message: 'Parking spaces must be an integer.' }) @Min(0, { message: 'Parking spaces cannot be negative.' }) parking_spaces?: number;
+  @IsOptional() @IsArray() @IsString({ each: true, message: 'Each security feature must be a string.' }) security_features?: string[];
 }
 
 export class CreateCommercialDetailsDto {
-  @IsString()
-  @IsNotEmpty({ message: 'Commercial property type is required.' })
-  @IsIn(allowedCommercialSubTypes, {
-    message: `Commercial property type must be one of: ${allowedCommercialSubTypes.join(
-      ', ',
-    )}`,
-  })
+  @IsString() @IsNotEmpty({ message: 'Commercial property type is required.' })
+  @IsIn(allowedCommercialSubTypes, { message: `Commercial property type must be one of: ${allowedCommercialSubTypes.join(', ')}`})
   property_type: string;
-
   @IsNumber({}, { message: 'Square meters must be a number.' })
-  @IsPositive({ message: 'Square meters must be a positive value.' })
-  square_meters: number;
-
-  @IsOptional()
-  @IsInt({ message: 'Parking spaces must be an integer.' })
-  @Min(0, { message: 'Parking spaces cannot be negative.' })
-  parking_spaces?: number;
-
-  @IsOptional()
-  @IsArray()
-  @IsString({ each: true, message: 'Each amenity must be a string.' })
-  amenities?: string[];
-
-  @IsOptional()
-  @IsArray()
-  @IsString({ each: true, message: 'Each security feature must be a string.' })
-  security_features?: string[];
+  @IsPositive({ message: 'Square meters must be a positive value.' }) square_meters: number;
+  @IsOptional() @IsInt({ message: 'Parking spaces must be an integer.' }) @Min(0, { message: 'Parking spaces cannot be negative.' }) parking_spaces?: number;
+  @IsOptional() @IsArray() @IsString({ each: true, message: 'Each amenity must be a string.' }) amenities?: string[];
+  @IsOptional() @IsArray() @IsString({ each: true, message: 'Each security feature must be a string.' }) security_features?: string[];
 }
+// --- End Detail DTOs ---
 
 export class CreatePropertyDto {
   @IsString() @IsNotEmpty() title: string;
   @IsNumber() @Min(0) price: number;
   @IsString() @IsNotEmpty() location: string;
-  @IsOptional() @IsArray() @IsString({ each: true }) images?: string[];
+
+  // 'images' field is OMITTED from CreatePropertyDto for input validation.
+  // It's handled by @UploadedFiles() and populated by the service.
+
   @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'string') {
+      try { return JSON.parse(value); } catch (e) { return value; }
+    }
+    return value;
+  })
   @ValidateNested()
   @Type(() => CoordinatesDto)
   coordinates?: CoordinatesDto;
+
   @IsOptional() @IsString() description?: string;
   @IsString() @IsNotEmpty() user_id: string;
   @IsOptional() @IsString() agent_id?: string;
-  @IsIn(['rent', 'sale']) property_type: 'rent' | 'sale';
+
+  @IsIn(['rent', 'sale'])
+  property_type: 'rent' | 'sale';
+
   @IsString() @IsNotEmpty() category: string;
 
   @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'string') {
+      try { return JSON.parse(value); } catch (e) { return value; }
+    }
+    return value;
+  })
   @ValidateNested()
   @Type((opts) => {
-    const category = opts?.object?.category;
+    // Access category from the object being validated/transformed
+    const DTOObject = opts?.object as CreatePropertyDto;
+    const category = DTOObject?.category;
     switch (category) {
-      case 'house':
-        return CreateHouseDetailsDto;
-      case 'land':
-        return CreateLandDetailsDto;
-      case 'apartment':
-        return CreateApartmentDetailsDto;
-      case 'commercial':
-        return CreateCommercialDetailsDto;
-      default:
-        return Object;
+      case 'house': return CreateHouseDetailsDto;
+      case 'land': return CreateLandDetailsDto;
+      case 'apartment': return CreateApartmentDetailsDto;
+      case 'commercial': return CreateCommercialDetailsDto;
+      default: return Object; // Or handle cases where category might be missing if details are present
     }
   })
   details?:

@@ -7,12 +7,12 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { SupabaseClient } from '@supabase/supabase-js';
-import { SUPABASE_CLIENT } from '../supabase/supabase.constants';
+import { SUPABASE_CLIENT } from '../supabase/supabase.constants'; // Adjust path if needed
 import { CreatePropertyDto } from './dto/create-property.dto';
 import { QueryPropertyDto } from './dto/query-property.dto';
-import { PropertyResponseDto, Property } from './dto/property.response.dto';
+import { PropertyResponseDto, Property } from './dto/property.response.dto'; // Or your store path
 import { UpdatePropertyDto } from './dto/update-property.dto';
-import { CloudinaryService } from '../cloudinary/cloudinary.service';
+import { CloudinaryService } from '../cloudinary/cloudinary.service'; // Adjust path if needed
 
 @Injectable()
 export class PropertiesService {
@@ -36,7 +36,7 @@ export class PropertiesService {
   async findPromoted(): Promise<Property[]> {
     this.logger.log('Fetching promoted properties');
     const { data, error } = await this.supabase
-      .from('properties_view')
+      .from('properties_view') // Assuming this view correctly joins and provides all necessary fields
       .select('*')
       .eq('is_promoted', true)
       .order('created_at', { ascending: false });
@@ -48,8 +48,27 @@ export class PropertiesService {
       );
     }
 
-    const mappedProperties: Property[] = (data || []).map((viewRow) => {
+    const mappedProperties: Property[] = (data || []).map((viewRow: any) => {
+      // Destructure all fields from the view, including those that form 'details'
       const {
+        // Base property fields from 'properties' table (expected in view)
+        id,
+        title,
+        price,
+        location,
+        images, // This should be the array of Cloudinary URLs from the 'properties' table
+        coordinates,
+        description,
+        property_type,
+        category,
+        user_id,
+        agent_id,
+        created_at,
+        status, // Assuming status comes from a join or is directly on properties_view
+        last_updated, // Same as status
+        is_promoted,
+
+        // Detail fields (prefixed as they appear in your 'properties_view' based on previous context)
         effective_bedrooms,
         effective_bathrooms,
         house_garages,
@@ -64,56 +83,75 @@ export class PropertiesService {
         land_electricity_available,
         land_fenced,
         apt_square_meters,
+        // apt_bedrooms, apt_bathrooms are covered by effective_bedrooms/bathrooms
         apt_amenities,
         apt_parking_spaces,
         apt_security_features,
-        comm_property_type,
+        comm_property_type, // This is the specific type for commercial like 'Office', 'Retail'
         comm_square_meters,
         comm_parking_spaces,
         comm_amenities,
         comm_security_features,
-        id,
-        title,
-        price,
-        location,
-        images,
-        coordinates,
-        description,
-        property_type,
-        category,
-        user_id,
-        agent_id,
-        created_at,
-        status,
-        last_updated,
-        is_promoted,
+        // ... any other fields from your view ...
       } = viewRow;
 
       let details: any = {};
       switch (category) {
         case 'house':
-          details = { bedrooms: effective_bedrooms, bathrooms: effective_bathrooms, garages: house_garages, parkings: house_parkings, amenities: house_amenities, security_features: house_security_features };
+          details = {
+            bedrooms: effective_bedrooms,
+            bathrooms: effective_bathrooms,
+            garages: house_garages,
+            parkings: house_parkings,
+            amenities: house_amenities,
+            security_features: house_security_features,
+          };
           break;
         case 'land':
-          details = { size_sqm: land_size_sqm, legal_status: land_legal_status, intended_use: land_intended_use, road_access: land_road_access, water_supply: land_water_supply, electricity_available: land_electricity_available, fenced: land_fenced };
+          details = {
+            size_sqm: land_size_sqm,
+            legal_status: land_legal_status,
+            intended_use: land_intended_use,
+            road_access: land_road_access,
+            water_supply: land_water_supply,
+            electricity_available: land_electricity_available,
+            fenced: land_fenced,
+          };
           break;
         case 'apartment':
-          details = { bedrooms: effective_bedrooms, bathrooms: effective_bathrooms, square_meters: apt_square_meters, amenities: apt_amenities, parking_spaces: apt_parking_spaces, security_features: apt_security_features };
+          details = {
+            bedrooms: effective_bedrooms, // Assuming effective_bedrooms covers apartments
+            bathrooms: effective_bathrooms, // Assuming effective_bathrooms covers apartments
+            square_meters: apt_square_meters,
+            amenities: apt_amenities,
+            parking_spaces: apt_parking_spaces,
+            security_features: apt_security_features,
+          };
           break;
         case 'commercial':
-          details = { property_type: comm_property_type, square_meters: comm_square_meters, parking_spaces: comm_parking_spaces, amenities: comm_amenities, security_features: comm_security_features };
+          details = {
+            property_type: comm_property_type, // This is the detail field for commercial type
+            square_meters: comm_square_meters,
+            parking_spaces: comm_parking_spaces,
+            amenities: comm_amenities,
+            security_features: comm_security_features,
+          };
           break;
       }
+      // Remove null/undefined detail fields
       Object.keys(details).forEach(
-        (key) => details[key] == null && delete details[key],
+        (key) => (details[key] === null || details[key] === undefined) && delete details[key],
       );
 
       return {
-        id, title, price, location, images, coordinates, description, property_type, category, user_id, agent_id, created_at, status, last_updated,
+        id, title, price, location, images, coordinates, description,
+        property_type, // This is 'rent' or 'sale'
+        category, user_id, agent_id, created_at, status, last_updated,
         details: Object.keys(details).length > 0 ? details : undefined,
         is_promoted,
       } as Property;
     });
+
     const uniquePropertiesMap = new Map<string, Property>();
     mappedProperties.forEach((p) => {
       uniquePropertiesMap.set(p.id, p);
@@ -127,77 +165,84 @@ export class PropertiesService {
     createPropertyDto: CreatePropertyDto,
     files?: Array<Express.Multer.File>,
   ): Promise<Property> {
-    const { details, ...baseData } = createPropertyDto;
-    this.logger.log(
-      `Attempting to create base property for category: ${baseData.category}`,
-    );
 
-    const uploadedImageUrls: string[] = [];
+    const { details, ...baseDataFromDto } = createPropertyDto;
+    this.logger.log(
+      `Attempting to create base property for category: ${baseDataFromDto.category}`,
+    );
+    this.logger.debug(`DTO received in service: ${JSON.stringify(createPropertyDto)}`);
+
+    const baseDataToInsert: any = { ...baseDataFromDto };
+
+    const uploadedCloudinaryUrls: string[] = [];
     if (files && files.length > 0) {
       this.logger.log(`Uploading ${files.length} images to Cloudinary.`);
       for (const file of files) {
         try {
           const uploadResult = await this.cloudinaryService.uploadImage(file);
-          uploadedImageUrls.push(uploadResult.secure_url);
+          uploadedCloudinaryUrls.push(uploadResult.secure_url);
         } catch (error: any) {
-          this.logger.error(`Failed to upload image: ${error.message}`, error.stack);
-          throw new InternalServerErrorException(`Image upload failed: ${error.message}`);
+          this.logger.error(`Failed to upload image to Cloudinary: ${error.message}`, error.stack);
+          throw new InternalServerErrorException(`Image upload to Cloudinary failed: ${error.message}`);
         }
       }
     }
-    baseData.images = uploadedImageUrls;
+    baseDataToInsert.images = uploadedCloudinaryUrls;
+
+    this.logger.debug(`Data for Supabase insert (properties): ${JSON.stringify(baseDataToInsert)}`);
 
     const { data: newBaseProperty, error: baseError } = await this.supabase
       .from(this.baseTableName)
-      .insert(baseData)
+      .insert(baseDataToInsert)
       .select()
       .single();
 
     if (baseError || !newBaseProperty) {
       this.logger.error(
-        `Error creating base property: ${baseError?.message}`,
+        `Error creating base property in Supabase: ${baseError?.message}`,
         baseError?.stack,
       );
-      if (uploadedImageUrls.length > 0) {
+      if (uploadedCloudinaryUrls.length > 0) {
         this.logger.warn('Rolling back Cloudinary uploads due to DB error.');
-        for (const url of uploadedImageUrls) {
+        for (const url of uploadedCloudinaryUrls) {
             const publicId = this.cloudinaryService.getPublicIdFromUrl(url);
             if (publicId) {
                 try { await this.cloudinaryService.deleteImage(publicId); }
-                catch (e: any) { this.logger.error(`Failed to delete rolled back image ${publicId}: ${e.message}`);}
+                catch (e: any) { this.logger.error(`Failed to delete rolled back Cloudinary image ${publicId}: ${e.message}`);}
             }
         }
       }
       throw new InternalServerErrorException(
-        `Failed to create base property: ${baseError?.message || 'Unknown error'}`,
+        `Failed to create base property in Supabase: ${baseError?.message || 'Unknown error'}`,
       );
     }
     this.logger.log(`Base property created with ID: ${newBaseProperty.id}`);
 
-    const detailTableName = this.getDetailTableName(baseData.category);
+    const detailTableName = this.getDetailTableName(baseDataFromDto.category);
     if (details && Object.keys(details).length > 0 && detailTableName) {
       this.logger.log(
         `Inserting details into ${detailTableName} for property ${newBaseProperty.id}`,
       );
+      this.logger.debug(`Details for Supabase insert (${detailTableName}): ${JSON.stringify({ ...details, property_id: newBaseProperty.id })}`);
       const { error: detailError } = await this.supabase
         .from(detailTableName)
         .insert({ ...details, property_id: newBaseProperty.id });
 
       if (detailError) {
         this.logger.error(
-          `Error inserting details into ${detailTableName}: ${detailError.message}. Rolling back base property and Cloudinary uploads.`,
+          `Error inserting property details into ${detailTableName}: ${detailError.message}. Rolling back.`,
           detailError.stack,
         );
         await this.supabase
           .from(this.baseTableName)
           .delete()
           .eq('id', newBaseProperty.id);
-        if (uploadedImageUrls.length > 0) {
-            for (const url of uploadedImageUrls) {
+        if (uploadedCloudinaryUrls.length > 0) {
+            for (const url of uploadedCloudinaryUrls) {
                 const publicId = this.cloudinaryService.getPublicIdFromUrl(url);
                 if (publicId) {
                     try { await this.cloudinaryService.deleteImage(publicId); }
-                    catch (e: any) { this.logger.error(`Failed to delete rolled back image ${publicId}: ${e.message}`);}
+                    catch (e: any) { this.logger.error(`Failed to delete rolled back Cloudinary image ${publicId}: ${e.message}`);}
                 }
             }
         }
@@ -208,14 +253,18 @@ export class PropertiesService {
       this.logger.log(`Details inserted successfully into ${detailTableName}`);
     } else if (details && Object.keys(details).length > 0 && !detailTableName) {
       this.logger.warn(
-        `Details provided for property ${newBaseProperty.id}, but no detail table found for category ${baseData.category}.`,
+        `Details provided for property ${newBaseProperty.id}, but no detail table found for category ${baseDataFromDto.category}. Details not saved.`,
       );
+    } else if (details && Object.keys(details).length === 0) {
+        this.logger.log(`No details provided or details object was empty for property ${newBaseProperty.id}. Skipping detail insertion.`);
     }
+
 
     return this.findOne(newBaseProperty.id);
   }
 
   async findAll(queryDto: QueryPropertyDto): Promise<PropertyResponseDto> {
+    // ... (findAll implementation from previous correct version)
     const {
       page = 1,
       pageSize = 10,
@@ -441,7 +490,7 @@ export class PropertiesService {
           break;
       }
       Object.keys(details).forEach(
-        (key) => details[key] == null && delete details[key],
+        (key) => (details[key] === null || details[key] === undefined) && delete details[key],
       );
 
       return {
@@ -472,17 +521,18 @@ export class PropertiesService {
     };
   }
 
+
   async findOne(id: string): Promise<Property> {
     if (!id) {
       throw new BadRequestException('Property ID cannot be empty');
     }
     this.logger.log(`Finding property with ID: ${id}`);
 
-    const { data: baseProperty, error: baseError } = await this.supabase
-      .from(this.baseTableName)
-      .select('*, property_status(status, last_updated)')
-      .eq('id', id)
-      .maybeSingle();
+    const { data: basePropertyData, error: baseError } = await this.supabase
+    .from(this.baseTableName)
+    .select('*, property_status(status, last_updated)')
+    .eq('id', id)
+    .maybeSingle();
 
     if (baseError) {
       this.logger.error(
@@ -494,14 +544,17 @@ export class PropertiesService {
       );
     }
 
-    if (!baseProperty) {
+    if (!basePropertyData) {
       throw new NotFoundException(`Property with ID ${id} not found`);
     }
 
-    const statusDetails = (baseProperty as any).property_status;
-    delete (baseProperty as any).property_status;
-    let detailsData = null;
-    const detailTableName = this.getDetailTableName(baseProperty.category);
+    // Separate status details if they came as a nested object
+    const { property_status, ...propertyFields } = basePropertyData as any;
+    const statusInfo = Array.isArray(property_status) ? property_status[0] : property_status;
+
+
+    let detailsData: any = null; // Initialize as null
+    const detailTableName = this.getDetailTableName(propertyFields.category);
 
     if (detailTableName) {
       this.logger.log(
@@ -511,27 +564,42 @@ export class PropertiesService {
         .from(detailTableName)
         .select('*')
         .eq('property_id', id)
-        .maybeSingle();
+        .maybeSingle(); // Use maybeSingle as details might not exist
 
       if (detailError) {
         this.logger.error(
           `Error fetching details from ${detailTableName} for property ${id}: ${detailError.message}`,
-          detailError.stack,
+          // Do not throw here, property might exist without details or details table might be empty for this ID
         );
       } else if (detailsResult) {
-        const { property_id, ...restOfDetails } = detailsResult;
+        const { property_id: detailPropertyId, ...restOfDetails } = detailsResult; // Exclude property_id from details object
         if (Object.keys(restOfDetails).length > 0) {
           detailsData = restOfDetails;
         }
       }
     }
 
-    return {
-      ...baseProperty,
-      status: statusDetails?.status,
-      last_updated: statusDetails?.last_updated,
+    // Construct the final Property object
+    const finalProperty: Property = { // <<< Explicitly typing here can help catch issues
+      ...(propertyFields as Omit<typeof propertyFields, 'property_status'>), // Spread known fields
+      id: propertyFields.id, // Ensure all required Property fields are present
+      title: propertyFields.title,
+      price: propertyFields.price,
+      location: propertyFields.location,
+      images: propertyFields.images || [], // <<< Default to empty array if null/undefined from DB
+      property_type: propertyFields.property_type,
+      category: propertyFields.category,
+      user_id: propertyFields.user_id,
+      created_at: propertyFields.created_at,
+      coordinates: propertyFields.coordinates,
+      description: propertyFields.description,
+      agent_id: propertyFields.agent_id,
+      status: statusInfo?.status,
+      last_updated: statusInfo?.last_updated,
       details: detailsData || undefined,
-    } as Property;
+      is_promoted: propertyFields.is_promoted,
+    };
+    return finalProperty;
   }
 
   async update(
@@ -542,101 +610,121 @@ export class PropertiesService {
     if (!id) {
       throw new BadRequestException('Property ID cannot be empty');
     }
-    const { details, existingImageUrls = [], deletedImagePublicIds = [], ...baseUpdates } = updatePropertyDto;
+
+    const {
+        details,
+        existingImageUrls = [], // Default to empty array if not provided
+        deletedImagePublicIds = [], // Default to empty array
+        // 'images' is not taken from updatePropertyDto directly for the final URL list
+        ...baseUpdatesFromDto
+    } = updatePropertyDto;
+
     this.logger.log(`Attempting to update property ID: ${id}`);
-
-    const currentProperty = await this.findOne(id);
-    if (!currentProperty) {
-      throw new NotFoundException(`Property with ID ${id} not found.`);
-    }
-
-    let finalImageUrls: string[] = Array.isArray(existingImageUrls) ? [...existingImageUrls] : (currentProperty.images || []);
+    this.logger.debug(`Update DTO: ${JSON.stringify(updatePropertyDto)}`);
 
 
-    if (deletedImagePublicIds && deletedImagePublicIds.length > 0) {
+    const currentProperty: Property = await this.findOne(id);
+
+    let finalImageUrls: string[] = Array.isArray(updatePropertyDto.existingImageUrls) && updatePropertyDto.existingImageUrls.length > 0
+                                   ? [...updatePropertyDto.existingImageUrls]
+                                   : (currentProperty.images || []);
+
+
+    if (Array.isArray(deletedImagePublicIds) && deletedImagePublicIds.length > 0) {
       this.logger.log(`Deleting ${deletedImagePublicIds.length} images from Cloudinary.`);
       for (const publicId of deletedImagePublicIds) {
-        try {
-          await this.cloudinaryService.deleteImage(publicId);
-          finalImageUrls = finalImageUrls.filter(url => {
-            const pid = this.cloudinaryService.getPublicIdFromUrl(url);
-            return pid !== publicId;
-          });
-        } catch (error: any) {
-          this.logger.error(`Failed to delete image ${publicId} from Cloudinary: ${error.message}`);
+        if (typeof publicId === 'string' && publicId.trim() !== '') {
+            try {
+              await this.cloudinaryService.deleteImage(publicId);
+              finalImageUrls = finalImageUrls.filter(url => {
+                const pidFromUrl = this.cloudinaryService.getPublicIdFromUrl(url);
+                return pidFromUrl !== publicId;
+              });
+            } catch (error: any) {
+              this.logger.error(`Failed to delete image ${publicId} from Cloudinary: ${error.message}`);
+            }
         }
       }
     }
 
-    const newUploadedUrls: string[] = [];
+    const newUploadedCloudinaryUrls: string[] = [];
     if (newFiles && newFiles.length > 0) {
       this.logger.log(`Uploading ${newFiles.length} new images to Cloudinary.`);
       for (const file of newFiles) {
         try {
           const uploadResult = await this.cloudinaryService.uploadImage(file);
-          newUploadedUrls.push(uploadResult.secure_url);
+          newUploadedCloudinaryUrls.push(uploadResult.secure_url);
         } catch (error: any) {
-          this.logger.error(`Failed to upload new image: ${error.message}`);
-          throw new InternalServerErrorException(`New image upload failed: ${error.message}`);
+          this.logger.error(`Failed to upload new image to Cloudinary: ${error.message}`);
+          throw new InternalServerErrorException(`New image upload to Cloudinary failed: ${error.message}`);
         }
       }
     }
-    finalImageUrls = [...finalImageUrls, ...newUploadedUrls];
-    (baseUpdates as any).images = finalImageUrls;
+    finalImageUrls = [...finalImageUrls, ...newUploadedCloudinaryUrls];
 
-    let currentCategory = (baseUpdates as any).category || currentProperty.category;
+    // Prepare the object for updating the 'properties' table
+    const baseUpdatesToApply: any = { ...baseUpdatesFromDto };
+    baseUpdatesToApply.images = finalImageUrls; // Set the final array of Cloudinary URLs
 
-    if (Object.keys(baseUpdates).length > 0) {
-      this.logger.log(`Updating base properties for ID: ${id}`);
+    // Determine category for detail table update (either from DTO or current property)
+    const categoryForDetailUpdate = baseUpdatesFromDto.category || currentProperty.category;
+
+    if (Object.keys(baseUpdatesToApply).length > 0) {
+      this.logger.log(`Updating base properties for ID: ${id} in Supabase`);
+      this.logger.debug(`Data for Supabase update (properties): ${JSON.stringify(baseUpdatesToApply)}`);
       const { data: updatedBase, error: baseUpdateError } = await this.supabase
         .from(this.baseTableName)
-        .update(baseUpdates)
+        .update(baseUpdatesToApply)
         .eq('id', id)
-        .select()
+        .select() // Select to confirm update and get potentially modified data
         .single();
 
       if (baseUpdateError) {
         this.logger.error(
-          `Error updating base property ${id}: ${baseUpdateError.message}`,
+          `Error updating base property ${id} in Supabase: ${baseUpdateError.message}`,
           baseUpdateError.stack,
         );
         throw new InternalServerErrorException(
-          `Failed to update base property: ${baseUpdateError.message}`,
+          `Failed to update base property in Supabase: ${baseUpdateError.message}`,
         );
       }
       if (!updatedBase) {
+        // Should be caught by findOne earlier, but as a safeguard
         throw new NotFoundException(
-          `Property with ID ${id} not found during base update.`,
+          `Property with ID ${id} not found during Supabase base update.`,
         );
       }
-      this.logger.log(`Base properties updated for ID: ${id}`);
+      this.logger.log(`Base properties updated for ID: ${id} in Supabase`);
     }
 
-    const detailTableName = currentCategory
-      ? this.getDetailTableName(currentCategory)
-      : null;
-
+    const detailTableName = this.getDetailTableName(categoryForDetailUpdate);
     if (details && Object.keys(details).length > 0 && detailTableName) {
-      this.logger.log(`Updating details in ${detailTableName} for ID: ${id}`);
-      const { error: detailUpdateError } = await this.supabase
+      this.logger.log(`Updating/inserting details in ${detailTableName} for property ID: ${id}`);
+      this.logger.debug(`Details for Supabase upsert (${detailTableName}): ${JSON.stringify({ ...details, property_id: id })}`);
+
+      // Use upsert for details: update if exists, insert if not.
+      // This requires 'property_id' to be a unique constraint or part of PK in detail tables.
+      const { error: detailUpsertError } = await this.supabase
         .from(detailTableName)
-        .update(details)
-        .eq('property_id', id);
-      if (detailUpdateError) {
+        .upsert({ ...details, property_id: id }, { onConflict: 'property_id' });
+
+
+      if (detailUpsertError) {
         this.logger.error(
-          `Error updating details in ${detailTableName} for property ${id}: ${detailUpdateError.message}`,
-          detailUpdateError.stack,
+          `Error upserting details in ${detailTableName} for property ${id}: ${detailUpsertError.message}`,
+          detailUpsertError.stack,
         );
+        // Decide on error handling: maybe log and continue, or throw if details are critical
       } else {
-        this.logger.log(`Details updated in ${detailTableName} for ID: ${id}`);
+        this.logger.log(`Details upserted in ${detailTableName} for ID: ${id}`);
       }
     } else if (details && Object.keys(details).length > 0 && !detailTableName) {
       this.logger.warn(
-        `Details provided for update on property ${id}, but no detail table found for category ${currentCategory}.`,
+        `Details provided for update on property ${id}, but no detail table found for category ${categoryForDetailUpdate}. Details not saved.`,
       );
     }
 
-    return this.findOne(id);
+    return this.findOne(id); // Return the fully updated property
   }
 
   async remove(id: string): Promise<void> {
@@ -645,8 +733,9 @@ export class PropertiesService {
     }
     this.logger.log(`Attempting to remove property ID: ${id}`);
 
-    const propertyToRemove = await this.findOne(id);
-    if (propertyToRemove && propertyToRemove.images && propertyToRemove.images.length > 0) {
+    const propertyToRemove: Property = await this.findOne(id);
+
+    if (propertyToRemove.images && propertyToRemove.images.length > 0) {
       this.logger.log(`Deleting ${propertyToRemove.images.length} images from Cloudinary for property ${id}.`);
       for (const imageUrl of propertyToRemove.images) {
         const publicId = this.cloudinaryService.getPublicIdFromUrl(imageUrl);
@@ -660,28 +749,27 @@ export class PropertiesService {
       }
     }
 
+    // Note: Deletion from detail tables should be handled by CASCADE DELETE in Supabase schema if set up.
+    // Otherwise, you'd need to delete from detail tables manually here before deleting from the base table.
     const { error, count } = await this.supabase
       .from(this.baseTableName)
-      .delete({ count: 'exact' })
+      .delete({ count: 'exact' }) // Ensure count is requested for feedback
       .eq('id', id);
 
     if (error) {
       this.logger.error(
-        `Error removing property ${id}: ${error.message}`,
+        `Error removing property ${id} from Supabase: ${error.message}`,
         error.stack,
       );
       throw new InternalServerErrorException(
-        `Failed to remove property: ${error.message}`,
+        `Failed to remove property from Supabase: ${error.message}`,
       );
     }
 
     if (count === 0) {
-      this.logger.warn(
-        `Property with ID ${id} not found for deletion or already deleted.`,
-      );
-       throw new NotFoundException(`Property with ID ${id} not found for deletion.`);
-    } else {
-      this.logger.log(`Property ID: ${id} removed successfully.`);
+      // This should ideally be caught by findOne, but as a safeguard.
+      throw new NotFoundException(`Property with ID ${id} not found for deletion in Supabase.`);
     }
+    this.logger.log(`Property ID: ${id} removed successfully from Supabase.`);
   }
 }
