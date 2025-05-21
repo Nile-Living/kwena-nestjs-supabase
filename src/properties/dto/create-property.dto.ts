@@ -10,11 +10,11 @@ import {
   IsBoolean,
   IsIn,
   IsPositive,
+  IsPhoneNumber,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 import { CoordinatesDto } from './coordinates.dto';
 
-// --- Detail DTOs (kept within this file as per your structure) ---
 const allowedCommercialSubTypes = [
   'Office', 'Retail', 'Warehouse', 'Industrial',
   'Mixed-Use', 'Restaurant', 'Other',
@@ -59,15 +59,11 @@ export class CreateCommercialDetailsDto {
   @IsOptional() @IsArray() @IsString({ each: true, message: 'Each amenity must be a string.' }) amenities?: string[];
   @IsOptional() @IsArray() @IsString({ each: true, message: 'Each security feature must be a string.' }) security_features?: string[];
 }
-// --- End Detail DTOs ---
 
 export class CreatePropertyDto {
   @IsString() @IsNotEmpty() title: string;
   @IsNumber() @Min(0) price: number;
   @IsString() @IsNotEmpty() location: string;
-
-  // 'images' field is OMITTED from CreatePropertyDto for input validation.
-  // It's handled by @UploadedFiles() and populated by the service.
 
   @IsOptional()
   @Transform(({ value }) => {
@@ -98,7 +94,6 @@ export class CreatePropertyDto {
   })
   @ValidateNested()
   @Type((opts) => {
-    // Access category from the object being validated/transformed
     const DTOObject = opts?.object as CreatePropertyDto;
     const category = DTOObject?.category;
     switch (category) {
@@ -106,7 +101,7 @@ export class CreatePropertyDto {
       case 'land': return CreateLandDetailsDto;
       case 'apartment': return CreateApartmentDetailsDto;
       case 'commercial': return CreateCommercialDetailsDto;
-      default: return Object; // Or handle cases where category might be missing if details are present
+      default: return Object;
     }
   })
   details?:
@@ -114,4 +109,9 @@ export class CreatePropertyDto {
     | CreateLandDetailsDto
     | CreateApartmentDetailsDto
     | CreateCommercialDetailsDto;
+
+  @IsOptional() @IsString() contact_phone_number?: string;
+  @IsOptional() @IsString() contact_whatsapp_number?: string;
+  @IsOptional() @IsBoolean() @Transform(({ value }) => value === 'true' || value === true || value === 'on' || value === 1) use_phone_for_call?: boolean;
+  @IsOptional() @IsBoolean() @Transform(({ value }) => value === 'true' || value === true || value === 'on' || value === 1) use_whatsapp_for_message?: boolean;
 }
