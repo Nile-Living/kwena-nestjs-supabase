@@ -13,8 +13,11 @@ import { QueryPropertyDto } from "./dto/query-property.dto";
 import { PropertyResponseDto, Property } from "./dto/property.response.dto";
 import { UpdatePropertyDto } from "./dto/update-property.dto";
 import { CloudinaryService } from "../cloudinary/cloudinary.service";
+import { CACHE_MANAGER, Cache } from "@nestjs/cache-manager";
 
-const REGULAR_PROPERTIES_PER_AD = 5; // Configurable: Show 1 ad after every 5 regular properties
+const REGULAR_PROPERTIES_PER_AD = 5;
+const RECENTLY_SHOWN_ADS_CACHE_KEY_PREFIX = "user_promo_ads_cycle_";
+const ADS_CYCLE_TTL_SECONDS = 15 * 60;
 
 @Injectable()
 export class PropertiesService {
@@ -24,6 +27,7 @@ export class PropertiesService {
   constructor(
     @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient,
     private readonly cloudinaryService: CloudinaryService,
+    @Inject(CACHE_MANAGER) private cacheManager: Cache,
   ) {}
 
   private getDetailTableName(category: string): string | null {
@@ -73,7 +77,7 @@ export class PropertiesService {
       apt_amenities,
       apt_parking_spaces,
       apt_security_features,
-      comm_property_type, // This was commercial_property_type_detail in schema, ensure it matches view
+      comm_property_type,
       comm_square_meters,
       comm_parking_spaces,
       comm_amenities,
@@ -159,7 +163,7 @@ export class PropertiesService {
       .from("properties_view")
       .select("*")
       .eq("is_promoted", true)
-      .order("created_at", { ascending: false }); // Or some other relevant order for promoted
+      .order("created_at", { ascending: false });
 
     if (error) {
       this.logger.error(`Error fetching promoted properties: ${error.message}`);
@@ -178,8 +182,14 @@ export class PropertiesService {
       page = 1,
       pageSize = 10,
       sort = "created_at.desc",
+      sessionId,
       ...filters
     } = queryDto;
+
+    const effectiveSessionId = sessionId || "anonymous_global_session";
+    this.logger.debug(
+      `Using effectiveSessionId: ${effectiveSessionId} for ad cycle. Page: ${page}`,
+    );
 
     const offset = (page - 1) * pageSize;
     const from = offset;
@@ -203,7 +213,7 @@ export class PropertiesService {
     }
     adCandidatesQuery = adCandidatesQuery.order("created_at", {
       ascending: false,
-    }); // Or a more sophisticated order for ads
+    }); // Consider a more dynamic order for ads if needed
 
     const { data: promotedAdCandidatesData, error: promotedError } =
       await adCandidatesQuery;
@@ -214,10 +224,12 @@ export class PropertiesService {
         promotedError.stack,
       );
     }
-    const promotedAdCandidates = (promotedAdCandidatesData || []).map((p) => ({
-      ...this.mapDbRowToProperty(p),
-      isInjectedAd: true,
-    }));
+    const allPromotedAdsMasterList = (promotedAdCandidatesData || []).map(
+      (p) => ({
+        ...this.mapDbRowToProperty(p),
+        isInjectedAd: true,
+      }),
+    );
 
     let regularQuery = this.supabase
       .from("properties_view")
@@ -240,7 +252,6 @@ export class PropertiesService {
       regularQuery = regularQuery.eq("agent_id", filters.agent_id);
     if (filters.status && filters.status !== "all")
       regularQuery = regularQuery.eq("status", filters.status);
-
     if (filters.bedrooms !== undefined && filters.bedrooms > 0)
       regularQuery = regularQuery.gte(
         "effective_bedrooms",
@@ -277,7 +288,6 @@ export class PropertiesService {
         "effective_square_meters",
         filters.max_square_meters,
       );
-
     if (filters.legal_status)
       regularQuery = regularQuery.eq("land_legal_status", filters.legal_status);
     if (filters.intended_use)
@@ -365,30 +375,91 @@ export class PropertiesService {
 
     const finalPropertiesList: Property[] = [];
     let regularItemCounter = 0;
-    let adCycleIndex = (page - 1) * Math.floor(pageSize / REGULAR_PROPERTIES_PER_AD);
+
+    const userCategoryCacheKey = `${RECENTLY_SHOWN_ADS_CACHE_KEY_PREFIX}${effectiveSessionId}_${
+      filters.category || "all"
+    }`;
+    const userOffsetCacheKey = `${userCategoryCacheKey}_offset`;
+
+    let recentlyShownAdsForUserCategory: string[] =
+      (await this.cacheManager.get<string[]>(userCategoryCacheKey)) || [];
+    let adCycleIndexForUserCategory: number =
+      (await this.cacheManager.get<number>(userOffsetCacheKey)) || 0;
+
+    const newAdsShownThisRequest: string[] = [];
+
+    if (allPromotedAdsMasterList.length > 0) {
+      // Filter out ads that are already part of the current page's regular properties
+      const regularPropertyIdsOnPage = new Set(regularProperties.map(p => p.id));
+      const eligibleAdsForInjection = allPromotedAdsMasterList.filter(ad => !regularPropertyIdsOnPage.has(ad.id));
 
 
-    if (promotedAdCandidates.length > 0) {
-      for (const regularProp of regularProperties) {
-        finalPropertiesList.push(regularProp);
-        regularItemCounter++;
+      if (eligibleAdsForInjection.length > 0) {
+        let adsAvailableForCurrentCycle = eligibleAdsForInjection.filter(
+            (ad) => !recentlyShownAdsForUserCategory.includes(ad.id),
+        );
 
-        if (regularItemCounter % REGULAR_PROPERTIES_PER_AD === 0) {
-          let injectedAdThisRound = false;
-          for (let i = 0; i < promotedAdCandidates.length; i++) {
-            const potentialAd = promotedAdCandidates[adCycleIndex % promotedAdCandidates.length];
-            adCycleIndex++; 
-            if (!finalPropertiesList.find(p => p.id === potentialAd.id)) {
-              finalPropertiesList.push(potentialAd);
-              injectedAdThisRound = true;
-              break; 
-            }
-          }
+        if (adsAvailableForCurrentCycle.length === 0) {
+            this.logger.log(
+              `Resetting ad cycle for session '${effectiveSessionId}', category '${filters.category || "all"}'. All ${eligibleAdsForInjection.length} eligible ads were in recentlyShown.`,
+            );
+            recentlyShownAdsForUserCategory = [];
+            adCycleIndexForUserCategory = 0; // Reset index for the new cycle
+            adsAvailableForCurrentCycle = [...eligibleAdsForInjection]; // Start fresh with all eligible ads
         }
+
+
+        for (const regularProp of regularProperties) {
+            finalPropertiesList.push(regularProp);
+            regularItemCounter++;
+
+            if (regularItemCounter % REGULAR_PROPERTIES_PER_AD === 0) {
+                if (adsAvailableForCurrentCycle.length > 0) {
+                    const adToInject = adsAvailableForCurrentCycle[adCycleIndexForUserCategory % adsAvailableForCurrentCycle.length];
+                    
+                    // Ensure ad is not already in the list being built for this page
+                    if (!finalPropertiesList.find(p => p.id === adToInject.id)) {
+                        finalPropertiesList.push(adToInject);
+                        newAdsShownThisRequest.push(adToInject.id);
+                        
+                        // Remove from this iteration's available pool to prevent re-injection on same page if multiple slots
+                        adsAvailableForCurrentCycle = adsAvailableForCurrentCycle.filter(ad => ad.id !== adToInject.id);
+                        // If we removed the ad we were pointing to, and the list became shorter, adjust index
+                        if (adCycleIndexForUserCategory >= adsAvailableForCurrentCycle.length && adsAvailableForCurrentCycle.length > 0) {
+                            adCycleIndexForUserCategory = adsAvailableForCurrentCycle.length -1;
+                        }
+                    }
+                    adCycleIndexForUserCategory++; // Increment for next potential slot globally
+                }
+            }
+        }
+      } else {
+         finalPropertiesList.push(...regularProperties);
       }
     } else {
       finalPropertiesList.push(...regularProperties);
     }
+
+    if (newAdsShownThisRequest.length > 0) {
+      const updatedRecentlyShown = Array.from(
+        new Set([...recentlyShownAdsForUserCategory, ...newAdsShownThisRequest]),
+      );
+      await this.cacheManager.set(
+        userCategoryCacheKey,
+        updatedRecentlyShown,
+        ADS_CYCLE_TTL_SECONDS,
+      );
+      // Persist the global cycle index for this user/category
+      await this.cacheManager.set(
+        userOffsetCacheKey,
+        adCycleIndexForUserCategory,
+        ADS_CYCLE_TTL_SECONDS,
+      );
+      this.logger.debug(
+        `Cache updated for ${userCategoryCacheKey}. Shown: ${updatedRecentlyShown.length}, Next Offset: ${adCycleIndexForUserCategory}`,
+      );
+    }
+
 
     return {
       properties: finalPropertiesList,
