@@ -5,24 +5,24 @@ import {
   InternalServerErrorException,
   Logger,
   BadRequestException,
-} from "@nestjs/common";
-import { SupabaseClient } from "@supabase/supabase-js";
-import { SUPABASE_CLIENT } from "../supabase/supabase.constants";
-import { CreatePropertyDto } from "./dto/create-property.dto";
-import { QueryPropertyDto } from "./dto/query-property.dto";
-import { PropertyResponseDto, Property } from "./dto/property.response.dto";
-import { UpdatePropertyDto } from "./dto/update-property.dto";
-import { CloudinaryService } from "../cloudinary/cloudinary.service";
-import { CACHE_MANAGER, Cache } from "@nestjs/cache-manager";
+} from '@nestjs/common';
+import { SupabaseClient } from '@supabase/supabase-js';
+import { SUPABASE_CLIENT } from '../supabase/supabase.constants';
+import { CreatePropertyDto } from './dto/create-property.dto';
+import { QueryPropertyDto } from './dto/query-property.dto';
+import { PropertyResponseDto, Property } from './dto/property.response.dto';
+import { UpdatePropertyDto } from './dto/update-property.dto';
+import { CloudinaryService } from '../cloudinary/cloudinary.service';
+import { CACHE_MANAGER, Cache } from '@nestjs/cache-manager';
 
-const REGULAR_PROPERTIES_PER_AD = 5;
-const RECENTLY_SHOWN_ADS_CACHE_KEY_PREFIX = "user_promo_ads_cycle_";
+const REGULAR_PROPERTIES_PER_AD = 7;
+const RECENTLY_SHOWN_ADS_CACHE_KEY_PREFIX = 'user_promo_ads_cycle_';
 const ADS_CYCLE_TTL_SECONDS = 15 * 60;
 
 @Injectable()
 export class PropertiesService {
   private readonly logger = new Logger(PropertiesService.name);
-  private readonly baseTableName = "properties";
+  private readonly baseTableName = 'properties';
 
   constructor(
     @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient,
@@ -31,7 +31,7 @@ export class PropertiesService {
   ) {}
 
   private getDetailTableName(category: string): string | null {
-    const validCategories = ["house", "land", "apartment", "commercial"];
+    const validCategories = ['house', 'land', 'apartment', 'commercial'];
     if (validCategories.includes(category)) {
       return `property_details_${category}`;
     }
@@ -86,7 +86,7 @@ export class PropertiesService {
 
     let details: any = {};
     switch (category) {
-      case "house":
+      case 'house':
         details = {
           bedrooms: effective_bedrooms,
           bathrooms: effective_bathrooms,
@@ -96,7 +96,7 @@ export class PropertiesService {
           security_features: house_security_features,
         };
         break;
-      case "land":
+      case 'land':
         details = {
           size_sqm: land_size_sqm,
           legal_status: land_legal_status,
@@ -107,7 +107,7 @@ export class PropertiesService {
           fenced: land_fenced,
         };
         break;
-      case "apartment":
+      case 'apartment':
         details = {
           bedrooms: effective_bedrooms,
           bathrooms: effective_bathrooms,
@@ -117,7 +117,7 @@ export class PropertiesService {
           security_features: apt_security_features,
         };
         break;
-      case "commercial":
+      case 'commercial':
         details = {
           property_type: comm_property_type,
           square_meters: comm_square_meters,
@@ -158,17 +158,17 @@ export class PropertiesService {
   }
 
   async findPromoted(): Promise<Property[]> {
-    this.logger.log("Fetching promoted properties");
+    this.logger.log('Fetching promoted properties');
     const { data, error } = await this.supabase
-      .from("properties_view")
-      .select("*")
-      .eq("is_promoted", true)
-      .order("created_at", { ascending: false });
+      .from('properties_view')
+      .select('*')
+      .eq('is_promoted', true)
+      .order('created_at', { ascending: false });
 
     if (error) {
       this.logger.error(`Error fetching promoted properties: ${error.message}`);
       throw new InternalServerErrorException(
-        "Failed to retrieve promoted properties",
+        'Failed to retrieve promoted properties',
       );
     }
     const mappedProperties = (data || []).map(this.mapDbRowToProperty);
@@ -181,12 +181,12 @@ export class PropertiesService {
     const {
       page = 1,
       pageSize = 10,
-      sort = "created_at.desc",
+      sort = 'created_at.desc',
       sessionId,
       ...filters
     } = queryDto;
 
-    const effectiveSessionId = sessionId || "anonymous_global_session";
+    const effectiveSessionId = sessionId || 'anonymous_global_session';
     this.logger.debug(
       `Using effectiveSessionId: ${effectiveSessionId} for ad cycle. Page: ${page}`,
     );
@@ -204,19 +204,237 @@ export class PropertiesService {
       };
     }
 
-    let adCandidatesQuery = this.supabase
-      .from("properties_view")
-      .select("*")
-      .eq("is_promoted", true);
-    if (filters.category && filters.category !== "all") {
-      adCandidatesQuery = adCandidatesQuery.eq("category", filters.category);
-    }
-    adCandidatesQuery = adCandidatesQuery.order("created_at", {
+    const buildBaseQuery = (isPromotedFilter?: boolean) => {
+      let query = this.supabase
+        .from('properties_view')
+        .select('*', { count: 'exact' });
+
+      if (isPromotedFilter !== undefined) {
+        query = query.eq('is_promoted', isPromotedFilter);
+      }
+
+      if (filters.category && filters.category !== 'all')
+        query = query.eq('category', filters.category);
+      if (
+        filters.propertyType &&
+        (filters.propertyType === 'rent' || filters.propertyType === 'sale')
+      )
+        query = query.eq('property_type', filters.propertyType);
+      if (filters.location) {
+        const trimmedLocation = filters.location.trim().toLowerCase();
+        if (trimmedLocation) {
+          const searchConditions: string[] = [];
+
+          searchConditions.push(`title.ilike.%${trimmedLocation}%`);
+          searchConditions.push(`location.ilike.%${trimmedLocation}%`);
+
+          const categoryMap: Record<string, string> = {
+            house: 'house',
+            houses: 'house',
+            apartment: 'apartment',
+            apartments: 'apartment',
+            flat: 'apartment',
+            flats: 'apartment',
+            land: 'land',
+            'vacant land': 'land',
+            plot: 'land',
+            plots: 'land',
+            commercial: 'commercial',
+            office: 'commercial',
+            retail: 'commercial',
+            shop: 'commercial',
+            farm: 'farm',
+            farms: 'farm',
+            farming: 'farm',
+            agricultural: 'farm',
+            industrial: 'industrial',
+            warehouse: 'industrial',
+            factory: 'industrial',
+            lodge: 'lodge',
+            lodges: 'lodge',
+            hotel: 'lodge',
+            guesthouse: 'lodge',
+          };
+
+          const matchedCategory = categoryMap[trimmedLocation];
+          if (matchedCategory) {
+            searchConditions.push(`category.eq.${matchedCategory}`);
+          }
+
+          if (
+            trimmedLocation.includes('rent') ||
+            trimmedLocation.includes('rental')
+          ) {
+            searchConditions.push(`property_type.eq.rent`);
+          }
+          if (
+            trimmedLocation.includes('sale') ||
+            trimmedLocation.includes('buy')
+          ) {
+            searchConditions.push(`property_type.eq.sale`);
+          }
+
+          searchConditions.push(`house_amenities.cs.{${trimmedLocation}}`);
+          searchConditions.push(`apt_amenities.cs.{${trimmedLocation}}`);
+          searchConditions.push(`comm_amenities.cs.{${trimmedLocation}}`);
+
+          searchConditions.push(
+            `house_security_features.cs.{${trimmedLocation}}`,
+          );
+          searchConditions.push(
+            `apt_security_features.cs.{${trimmedLocation}}`,
+          );
+          searchConditions.push(
+            `comm_security_features.cs.{${trimmedLocation}}`,
+          );
+
+          const amenityVariations: Record<string, string[]> = {
+            pool: ['Pool', 'Swimming Pool'],
+            'swimming pool': ['Pool', 'Swimming Pool'],
+            security: ['24hr Security', 'Security', 'Security Gate'],
+            '24hr security': ['24hr Security', 'Security'],
+            'security gate': ['Security Gate', 'Security'],
+            garden: ['Garden'],
+            garage: ['Garage'],
+            parking: ['Parking'],
+            internet: ['Fibre Internet'],
+            fibre: ['Fibre Internet'],
+            wifi: ['Fibre Internet'],
+            'air conditioning': ['Air Conditioning'],
+            aircon: ['Air Conditioning'],
+            ac: ['Air Conditioning'],
+            borehole: ['Borehole'],
+            water: ['Water Connection', 'Borehole'],
+            electricity: ['Electricity', 'Three Phase Power'],
+            power: ['Electricity', 'Three Phase Power'],
+            'boundary wall': ['Boundary Wall'],
+            wall: ['Boundary Wall'],
+            fenced: ['Fenced'],
+            fence: ['Fenced'],
+            'staff quarters': ['Staff Quarters'],
+            quarters: ['Staff Quarters'],
+          };
+
+          const matchedAmenities = amenityVariations[trimmedLocation];
+          if (matchedAmenities) {
+            matchedAmenities.forEach((amenity) => {
+              searchConditions.push(`house_amenities.cs.{${amenity}}`);
+              searchConditions.push(`apt_amenities.cs.{${amenity}}`);
+              searchConditions.push(`comm_amenities.cs.{${amenity}}`);
+            });
+          }
+
+          // 7. Search in commercial property types
+          const commercialTypes = [
+            'Office',
+            'Retail',
+            'Warehouse',
+            'Industrial',
+            'Mixed-Use',
+            'Restaurant',
+          ];
+          const matchedCommercialType = commercialTypes.find(
+            (type) =>
+              type.toLowerCase() === trimmedLocation ||
+              type.toLowerCase().includes(trimmedLocation),
+          );
+          if (matchedCommercialType) {
+            searchConditions.push(
+              `comm_property_type.eq.${matchedCommercialType}`,
+            );
+          }
+
+          // 8. Search in land details
+          if (
+            trimmedLocation.includes('residential') ||
+            trimmedLocation.includes('commercial') ||
+            trimmedLocation.includes('agricultural') ||
+            trimmedLocation.includes('industrial')
+          ) {
+            searchConditions.push(
+              `land_intended_use.ilike.%${trimmedLocation}%`,
+            );
+          }
+
+          // 9. Search for bedroom/bathroom counts
+          const bedroomMatch = trimmedLocation.match(
+            /(\d+)\s*(bed|bedroom|br)/,
+          );
+          if (bedroomMatch) {
+            const bedCount = parseInt(bedroomMatch[1]);
+            searchConditions.push(`effective_bedrooms.gte.${bedCount}`);
+          }
+
+          const bathroomMatch = trimmedLocation.match(
+            /(\d+)\s*(bath|bathroom|br)/,
+          );
+          if (bathroomMatch) {
+            const bathCount = parseInt(bathroomMatch[1]);
+            searchConditions.push(`effective_bathrooms.gte.${bathCount}`);
+          }
+
+          // Apply the OR condition with all search possibilities
+          query = query.or(searchConditions.join(','));
+        }
+      }
+
+      if (filters.minPrice !== undefined)
+        query = query.gte('price', filters.minPrice);
+      if (filters.maxPrice !== undefined)
+        query = query.lte('price', filters.maxPrice);
+      if (filters.user_id) query = query.eq('user_id', filters.user_id);
+      if (filters.agent_id) query = query.eq('agent_id', filters.agent_id);
+      if (filters.status && filters.status !== 'all')
+        query = query.eq('status', filters.status);
+      if (filters.bedrooms !== undefined && filters.bedrooms > 0)
+        query = query.gte('effective_bedrooms', filters.bedrooms);
+      if (filters.bathrooms !== undefined && filters.bathrooms > 0)
+        query = query.gte('effective_bathrooms', filters.bathrooms);
+      if (filters.garages !== undefined && filters.garages > 0)
+        query = query.gte('house_garages', filters.garages);
+      if (filters.house_parkings !== undefined && filters.house_parkings > 0)
+        query = query.gte('house_parkings', filters.house_parkings);
+      if (filters.parking_spaces !== undefined && filters.parking_spaces > 0)
+        query = query.gte('effective_parking_spaces', filters.parking_spaces);
+      if (filters.min_size_sqm !== undefined)
+        query = query.gte('land_size_sqm', filters.min_size_sqm);
+      if (filters.max_size_sqm !== undefined)
+        query = query.lte('land_size_sqm', filters.max_size_sqm);
+      if (filters.min_square_meters !== undefined)
+        query = query.gte('effective_square_meters', filters.min_square_meters);
+      if (filters.max_square_meters !== undefined)
+        query = query.lte('effective_square_meters', filters.max_square_meters);
+      if (filters.legal_status)
+        query = query.eq('land_legal_status', filters.legal_status);
+      if (filters.intended_use)
+        query = query.eq('land_intended_use', filters.intended_use);
+      if (filters.road_access !== undefined)
+        query = query.eq('land_road_access', filters.road_access);
+      if (filters.water_supply)
+        query = query.eq('land_water_supply', filters.water_supply);
+      if (filters.electricity_available !== undefined)
+        query = query.eq(
+          'land_electricity_available',
+          filters.electricity_available,
+        );
+      if (filters.fenced !== undefined)
+        query = query.eq('land_fenced', filters.fenced);
+      if (filters.commercial_property_type)
+        query = query.eq(
+          'comm_property_type',
+          filters.commercial_property_type,
+        );
+
+      return query;
+    };
+
+    // Fetch promoted ad candidates that match ALL search criteria
+    const promotedAdCandidatesQuery = buildBaseQuery(true).order('created_at', {
       ascending: false,
-    }); // Consider a more dynamic order for ads if needed
+    });
 
     const { data: promotedAdCandidatesData, error: promotedError } =
-      await adCandidatesQuery;
+      await promotedAdCandidatesQuery;
 
     if (promotedError) {
       this.logger.error(
@@ -224,6 +442,7 @@ export class PropertiesService {
         promotedError.stack,
       );
     }
+
     const allPromotedAdsMasterList = (promotedAdCandidatesData || []).map(
       (p) => ({
         ...this.mapDbRowToProperty(p),
@@ -231,126 +450,49 @@ export class PropertiesService {
       }),
     );
 
-    let regularQuery = this.supabase
-      .from("properties_view")
-      .select("*", { count: "exact" })
-      .eq("is_promoted", false);
+    // Fetch ALL properties (both regular and promoted) that match the search criteria
+    let allPropertiesQuery = buildBaseQuery(); // No promoted filter - gets both regular and promoted
 
-    if (filters.category && filters.category !== "all")
-      regularQuery = regularQuery.eq("category", filters.category);
-    if (filters.propertyType && (filters.propertyType === "rent" || filters.propertyType === "sale"))
-      regularQuery = regularQuery.eq("property_type", filters.propertyType);
-    if (filters.location)
-      regularQuery = regularQuery.ilike("location", `%${filters.location}%`);
-    if (filters.minPrice !== undefined)
-      regularQuery = regularQuery.gte("price", filters.minPrice);
-    if (filters.maxPrice !== undefined)
-      regularQuery = regularQuery.lte("price", filters.maxPrice);
-    if (filters.user_id)
-      regularQuery = regularQuery.eq("user_id", filters.user_id);
-    if (filters.agent_id)
-      regularQuery = regularQuery.eq("agent_id", filters.agent_id);
-    if (filters.status && filters.status !== "all")
-      regularQuery = regularQuery.eq("status", filters.status);
-    if (filters.bedrooms !== undefined && filters.bedrooms > 0)
-      regularQuery = regularQuery.gte(
-        "effective_bedrooms",
-        filters.bedrooms,
-      );
-    if (filters.bathrooms !== undefined && filters.bathrooms > 0)
-      regularQuery = regularQuery.gte(
-        "effective_bathrooms",
-        filters.bathrooms,
-      );
-    if (filters.garages !== undefined && filters.garages > 0)
-      regularQuery = regularQuery.gte("house_garages", filters.garages);
-    if (filters.house_parkings !== undefined && filters.house_parkings > 0)
-      regularQuery = regularQuery.gte(
-        "house_parkings",
-        filters.house_parkings,
-      );
-    if (filters.parking_spaces !== undefined && filters.parking_spaces > 0)
-      regularQuery = regularQuery.gte(
-        "effective_parking_spaces",
-        filters.parking_spaces,
-      );
-    if (filters.min_size_sqm !== undefined)
-      regularQuery = regularQuery.gte("land_size_sqm", filters.min_size_sqm);
-    if (filters.max_size_sqm !== undefined)
-      regularQuery = regularQuery.lte("land_size_sqm", filters.max_size_sqm);
-    if (filters.min_square_meters !== undefined)
-      regularQuery = regularQuery.gte(
-        "effective_square_meters",
-        filters.min_square_meters,
-      );
-    if (filters.max_square_meters !== undefined)
-      regularQuery = regularQuery.lte(
-        "effective_square_meters",
-        filters.max_square_meters,
-      );
-    if (filters.legal_status)
-      regularQuery = regularQuery.eq("land_legal_status", filters.legal_status);
-    if (filters.intended_use)
-      regularQuery = regularQuery.eq(
-        "land_intended_use",
-        filters.intended_use,
-      );
-    if (filters.road_access !== undefined)
-      regularQuery = regularQuery.eq("land_road_access", filters.road_access);
-    if (filters.water_supply)
-      regularQuery = regularQuery.eq("land_water_supply", filters.water_supply);
-    if (filters.electricity_available !== undefined)
-      regularQuery = regularQuery.eq(
-        "land_electricity_available",
-        filters.electricity_available,
-      );
-    if (filters.fenced !== undefined)
-      regularQuery = regularQuery.eq("land_fenced", filters.fenced);
-    if (filters.commercial_property_type)
-      regularQuery = regularQuery.eq(
-        "comm_property_type",
-        filters.commercial_property_type,
-      );
-
+    // Apply sorting
     try {
-      const [sortFieldInput, sortOrderInput = "desc"] = sort.split(".");
-      const sortOrder = sortOrderInput.toLowerCase() === "asc" ? "asc" : "desc";
+      const [sortFieldInput, sortOrderInput = 'desc'] = sort.split('.');
+      const sortOrder = sortOrderInput.toLowerCase() === 'asc' ? 'asc' : 'desc';
       const sortColumnMapping: Record<string, string> = {
-        created_at: "created_at",
-        price: "price",
-        title: "title",
-        bedrooms: "effective_bedrooms",
-        bathrooms: "effective_bathrooms",
-        garages: "house_garages",
-        parkings: "house_parkings",
-        parking_spaces: "effective_parking_spaces",
-        size_sqm: "land_size_sqm",
-        square_meters: "effective_square_meters",
-        status: "status",
+        created_at: 'created_at',
+        price: 'price',
+        title: 'title',
+        bedrooms: 'effective_bedrooms',
+        bathrooms: 'effective_bathrooms',
+        garages: 'house_garages',
+        parkings: 'house_parkings',
+        parking_spaces: 'effective_parking_spaces',
+        size_sqm: 'land_size_sqm',
+        square_meters: 'effective_square_meters',
+        status: 'status',
       };
-      const sortColumn = sortColumnMapping[sortFieldInput] || "created_at";
-      regularQuery = regularQuery.order(sortColumn, {
-        ascending: sortOrder === "asc",
+      const sortColumn = sortColumnMapping[sortFieldInput] || 'created_at';
+      allPropertiesQuery = allPropertiesQuery.order(sortColumn, {
+        ascending: sortOrder === 'asc',
         nullsFirst: false,
       });
     } catch (e) {
       this.logger.warn(
         `Failed to parse sort parameter: ${sort}. Defaulting to created_at.desc`,
       );
-      regularQuery = regularQuery.order("created_at", {
+      allPropertiesQuery = allPropertiesQuery.order('created_at', {
         ascending: false,
         nullsFirst: false,
       });
     }
 
-    regularQuery = regularQuery.range(from, to);
+    allPropertiesQuery = allPropertiesQuery.range(from, to);
     const {
-      data: regularData,
-      error: regularError,
-      count: totalRegularCount,
-    } = await regularQuery;
+      data: allPropertiesData,
+      error: allPropertiesError,
+      count: totalCount,
+    } = await allPropertiesQuery;
 
-    if (regularError?.code === "PGRST103") {
+    if (allPropertiesError?.code === 'PGRST103') {
       return {
         properties: [],
         total: 0,
@@ -358,112 +500,111 @@ export class PropertiesService {
         pageSize: Number(pageSize),
       };
     }
-    if (regularError) {
+    if (allPropertiesError) {
       this.logger.error(
-        `Error fetching regular properties: ${regularError.message}`,
-        regularError.stack,
+        `Error fetching all properties: ${allPropertiesError.message}`,
+        allPropertiesError.stack,
       );
       throw new InternalServerErrorException(
-        `Failed to retrieve properties: ${regularError.message}`,
+        `Failed to retrieve properties: ${allPropertiesError.message}`,
       );
     }
 
-    const regularProperties: Property[] = (regularData || []).map((p) => ({
+    // Map all properties and separate regular from promoted
+    const allProperties: Property[] = (allPropertiesData || []).map((p) => ({
       ...this.mapDbRowToProperty(p),
       isInjectedAd: false,
     }));
 
+    const regularProperties = allProperties.filter((p) => !p.is_promoted);
+    const promotedPropertiesInResults = allProperties.filter(
+      (p) => p.is_promoted,
+    );
+
     const finalPropertiesList: Property[] = [];
-    let regularItemCounter = 0;
 
     const userCategoryCacheKey = `${RECENTLY_SHOWN_ADS_CACHE_KEY_PREFIX}${effectiveSessionId}_${
-      filters.category || "all"
+      filters.category || 'all'
     }`;
     const userOffsetCacheKey = `${userCategoryCacheKey}_offset`;
 
-    let recentlyShownAdsForUserCategory: string[] =
-      (await this.cacheManager.get<string[]>(userCategoryCacheKey)) || [];
-    let adCycleIndexForUserCategory: number =
-      (await this.cacheManager.get<number>(userOffsetCacheKey)) || 0;
+    // If we have promoted ads available for injection and regular properties to inject them into
+    if (allPromotedAdsMasterList.length > 0 && regularProperties.length > 0) {
+      // Filter out ads that are already part of the current page's results
+      const propertiesAlreadyInResults = new Set([
+        ...regularProperties.map((p) => p.id),
+        ...promotedPropertiesInResults.map((p) => p.id),
+      ]);
 
-    const newAdsShownThisRequest: string[] = [];
-
-    if (allPromotedAdsMasterList.length > 0) {
-      // Filter out ads that are already part of the current page's regular properties
-      const regularPropertyIdsOnPage = new Set(regularProperties.map(p => p.id));
-      const eligibleAdsForInjection = allPromotedAdsMasterList.filter(ad => !regularPropertyIdsOnPage.has(ad.id));
-
+      const eligibleAdsForInjection = allPromotedAdsMasterList.filter(
+        (ad) => !propertiesAlreadyInResults.has(ad.id),
+      );
 
       if (eligibleAdsForInjection.length > 0) {
-        let adsAvailableForCurrentCycle = eligibleAdsForInjection.filter(
-            (ad) => !recentlyShownAdsForUserCategory.includes(ad.id),
+        // Get current global ad cycle index
+        let globalAdCycleIndex: number =
+          (await this.cacheManager.get<number>(userOffsetCacheKey)) || 0;
+
+        this.logger.debug(
+          `Starting with global ad cycle index: ${globalAdCycleIndex} for session ${effectiveSessionId}`,
         );
 
-        if (adsAvailableForCurrentCycle.length === 0) {
-            this.logger.log(
-              `Resetting ad cycle for session '${effectiveSessionId}', category '${filters.category || "all"}'. All ${eligibleAdsForInjection.length} eligible ads were in recentlyShown.`,
-            );
-            recentlyShownAdsForUserCategory = [];
-            adCycleIndexForUserCategory = 0; // Reset index for the new cycle
-            adsAvailableForCurrentCycle = [...eligibleAdsForInjection]; // Start fresh with all eligible ads
-        }
+        const adsInjectedThisPage = new Set<string>();
+        let regularItemCounter = 0;
 
+        // First, add all promoted properties that are already in results (they matched the search)
+        promotedPropertiesInResults.forEach((promotedProp) => {
+          finalPropertiesList.push(promotedProp);
+        });
 
+        // Then inject regular properties with ads
         for (const regularProp of regularProperties) {
-            finalPropertiesList.push(regularProp);
-            regularItemCounter++;
+          finalPropertiesList.push(regularProp);
+          regularItemCounter++;
 
-            if (regularItemCounter % REGULAR_PROPERTIES_PER_AD === 0) {
-                if (adsAvailableForCurrentCycle.length > 0) {
-                    const adToInject = adsAvailableForCurrentCycle[adCycleIndexForUserCategory % adsAvailableForCurrentCycle.length];
-                    
-                    // Ensure ad is not already in the list being built for this page
-                    if (!finalPropertiesList.find(p => p.id === adToInject.id)) {
-                        finalPropertiesList.push(adToInject);
-                        newAdsShownThisRequest.push(adToInject.id);
-                        
-                        // Remove from this iteration's available pool to prevent re-injection on same page if multiple slots
-                        adsAvailableForCurrentCycle = adsAvailableForCurrentCycle.filter(ad => ad.id !== adToInject.id);
-                        // If we removed the ad we were pointing to, and the list became shorter, adjust index
-                        if (adCycleIndexForUserCategory >= adsAvailableForCurrentCycle.length && adsAvailableForCurrentCycle.length > 0) {
-                            adCycleIndexForUserCategory = adsAvailableForCurrentCycle.length -1;
-                        }
-                    }
-                    adCycleIndexForUserCategory++; // Increment for next potential slot globally
-                }
+          // Inject ad after every REGULAR_PROPERTIES_PER_AD regular properties
+          if (regularItemCounter % REGULAR_PROPERTIES_PER_AD === 0) {
+            // Get the next ad in the cycle
+            const adIndex = globalAdCycleIndex % eligibleAdsForInjection.length;
+            const adToInject = eligibleAdsForInjection[adIndex];
+
+            // Only inject if we haven't already used this ad on this page
+            if (!adsInjectedThisPage.has(adToInject.id)) {
+              finalPropertiesList.push(adToInject);
+              adsInjectedThisPage.add(adToInject.id);
+
+              this.logger.debug(
+                `Injected ad ${adToInject.id} (index ${adIndex}) at position ${finalPropertiesList.length} for session ${effectiveSessionId}`,
+              );
             }
+
+            // Always advance the cycle index
+            globalAdCycleIndex++;
+          }
         }
+
+        // Persist the updated global cycle index
+        await this.cacheManager.set(
+          userOffsetCacheKey,
+          globalAdCycleIndex,
+          ADS_CYCLE_TTL_SECONDS,
+        );
+
+        this.logger.debug(
+          `Updated global ad cycle index to ${globalAdCycleIndex} for session ${effectiveSessionId}, category ${filters.category || 'all'}`,
+        );
       } else {
-         finalPropertiesList.push(...regularProperties);
+        // No additional ads to inject, just return all properties
+        finalPropertiesList.push(...allProperties);
       }
     } else {
-      finalPropertiesList.push(...regularProperties);
+      // No ads available for injection or no regular properties, just return all properties
+      finalPropertiesList.push(...allProperties);
     }
-
-    if (newAdsShownThisRequest.length > 0) {
-      const updatedRecentlyShown = Array.from(
-        new Set([...recentlyShownAdsForUserCategory, ...newAdsShownThisRequest]),
-      );
-      await this.cacheManager.set(
-        userCategoryCacheKey,
-        updatedRecentlyShown,
-        ADS_CYCLE_TTL_SECONDS,
-      );
-      // Persist the global cycle index for this user/category
-      await this.cacheManager.set(
-        userOffsetCacheKey,
-        adCycleIndexForUserCategory,
-        ADS_CYCLE_TTL_SECONDS,
-      );
-      this.logger.debug(
-        `Cache updated for ${userCategoryCacheKey}. Shown: ${updatedRecentlyShown.length}, Next Offset: ${adCycleIndexForUserCategory}`,
-      );
-    }
-
 
     return {
       properties: finalPropertiesList,
-      total: totalRegularCount ?? 0,
+      total: totalCount ?? 0,
       page: Number(page),
       pageSize: Number(pageSize),
     };
@@ -530,7 +671,7 @@ export class PropertiesService {
         baseError?.stack,
       );
       if (uploadedCloudinaryUrls.length > 0) {
-        this.logger.warn("Rolling back Cloudinary uploads due to DB error.");
+        this.logger.warn('Rolling back Cloudinary uploads due to DB error.');
         for (const url of uploadedCloudinaryUrls) {
           const publicId = this.cloudinaryService.getPublicIdFromUrl(url);
           if (publicId) {
@@ -546,7 +687,7 @@ export class PropertiesService {
       }
       throw new InternalServerErrorException(
         `Failed to create base property: ${
-          baseError?.message || "Unknown error"
+          baseError?.message || 'Unknown error'
         }`,
       );
     }
@@ -569,7 +710,7 @@ export class PropertiesService {
         await this.supabase
           .from(this.baseTableName)
           .delete()
-          .eq("id", newBaseProperty.id);
+          .eq('id', newBaseProperty.id);
         if (uploadedCloudinaryUrls.length > 0) {
           for (const url of uploadedCloudinaryUrls) {
             const publicId = this.cloudinaryService.getPublicIdFromUrl(url);
@@ -595,13 +736,13 @@ export class PropertiesService {
 
   async findOne(id: string): Promise<Property> {
     if (!id) {
-      throw new BadRequestException("Property ID cannot be empty");
+      throw new BadRequestException('Property ID cannot be empty');
     }
     this.logger.log(`Finding property with ID: ${id}`);
     const { data, error } = await this.supabase
-      .from("properties_view")
-      .select("*")
-      .eq("id", id)
+      .from('properties_view')
+      .select('*')
+      .eq('id', id)
       .maybeSingle();
 
     if (error) {
@@ -625,7 +766,7 @@ export class PropertiesService {
     newFiles?: Array<Express.Multer.File>,
   ): Promise<Property> {
     if (!id) {
-      throw new BadRequestException("Property ID cannot be empty");
+      throw new BadRequestException('Property ID cannot be empty');
     }
     const {
       details,
@@ -650,7 +791,7 @@ export class PropertiesService {
         `Deleting ${deletedImagePublicIds.length} images from Cloudinary.`,
       );
       for (const publicId of deletedImagePublicIds) {
-        if (typeof publicId === "string" && publicId.trim() !== "") {
+        if (typeof publicId === 'string' && publicId.trim() !== '') {
           try {
             await this.cloudinaryService.deleteImage(publicId);
             finalImageUrls = finalImageUrls.filter((url) => {
@@ -688,12 +829,12 @@ export class PropertiesService {
     const baseUpdatesToApply: any = { ...baseUpdatesFromDto };
     baseUpdatesToApply.images = finalImageUrls;
 
-    if (baseUpdatesToApply.hasOwnProperty("use_phone_for_call")) {
+    if (baseUpdatesToApply.hasOwnProperty('use_phone_for_call')) {
       baseUpdatesToApply.use_phone_for_call =
         baseUpdatesToApply.use_phone_for_call ??
         !!baseUpdatesToApply.contact_phone_number;
     }
-    if (baseUpdatesToApply.hasOwnProperty("use_whatsapp_for_message")) {
+    if (baseUpdatesToApply.hasOwnProperty('use_whatsapp_for_message')) {
       baseUpdatesToApply.use_whatsapp_for_message =
         baseUpdatesToApply.use_whatsapp_for_message ??
         !!baseUpdatesToApply.contact_whatsapp_number;
@@ -704,13 +845,12 @@ export class PropertiesService {
 
     if (Object.keys(baseUpdatesToApply).length > 0) {
       this.logger.log(`Updating base properties for ID: ${id} in Supabase`);
-      const { data: updatedBase, error: baseUpdateError } =
-        await this.supabase
-          .from(this.baseTableName)
-          .update(baseUpdatesToApply)
-          .eq("id", id)
-          .select()
-          .single();
+      const { data: updatedBase, error: baseUpdateError } = await this.supabase
+        .from(this.baseTableName)
+        .update(baseUpdatesToApply)
+        .eq('id', id)
+        .select()
+        .single();
 
       if (baseUpdateError) {
         this.logger.error(
@@ -736,7 +876,7 @@ export class PropertiesService {
       );
       const { error: detailUpsertError } = await this.supabase
         .from(detailTableName)
-        .upsert({ ...details, property_id: id }, { onConflict: "property_id" });
+        .upsert({ ...details, property_id: id }, { onConflict: 'property_id' });
 
       if (detailUpsertError) {
         this.logger.error(
@@ -752,7 +892,7 @@ export class PropertiesService {
 
   async remove(id: string): Promise<void> {
     if (!id) {
-      throw new BadRequestException("Property ID cannot be empty");
+      throw new BadRequestException('Property ID cannot be empty');
     }
     this.logger.log(`Attempting to remove property ID: ${id}`);
     const propertyToRemove: Property = await this.findOne(id);
@@ -777,8 +917,8 @@ export class PropertiesService {
 
     const { error, count } = await this.supabase
       .from(this.baseTableName)
-      .delete({ count: "exact" })
-      .eq("id", id);
+      .delete({ count: 'exact' })
+      .eq('id', id);
 
     if (error) {
       this.logger.error(
