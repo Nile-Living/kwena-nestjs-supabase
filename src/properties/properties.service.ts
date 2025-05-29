@@ -77,13 +77,13 @@ export class PropertiesService {
       apt_amenities,
       apt_parking_spaces,
       apt_security_features,
-      comm_property_type,
+      commercial_property_type_detail, // Fixed: was comm_property_type
       comm_square_meters,
       comm_parking_spaces,
       comm_amenities,
       comm_security_features,
     } = viewRow;
-
+  
     let details: any = {};
     switch (category) {
       case 'house':
@@ -119,7 +119,7 @@ export class PropertiesService {
         break;
       case 'commercial':
         details = {
-          property_type: comm_property_type,
+          property_type: commercial_property_type_detail, // Fixed: was comm_property_type
           square_meters: comm_square_meters,
           parking_spaces: comm_parking_spaces,
           amenities: comm_amenities,
@@ -127,13 +127,15 @@ export class PropertiesService {
         };
         break;
     }
+  
+    // Remove null/undefined values from details
     Object.keys(details).forEach(
       (key) =>
         (details[key] === null || details[key] === undefined) &&
         delete details[key],
     );
-
-    return {
+  
+    const mappedProperty: Property = {
       id,
       title,
       price,
@@ -154,8 +156,14 @@ export class PropertiesService {
       contact_whatsapp_number,
       use_phone_for_call: use_phone_for_call === true,
       use_whatsapp_for_message: use_whatsapp_for_message === true,
-    } as Property;
+    };
+  
+    // Add debug logging to see what details are being mapped
+    this.logger.debug(`Mapped property ${id} with details:`, JSON.stringify(details, null, 2));
+    
+    return mappedProperty;
   }
+  
 
   async findPromoted(): Promise<Property[]> {
     this.logger.log('Fetching promoted properties');
@@ -164,18 +172,31 @@ export class PropertiesService {
       .select('*')
       .eq('is_promoted', true)
       .order('created_at', { ascending: false });
-
+  
     if (error) {
       this.logger.error(`Error fetching promoted properties: ${error.message}`);
       throw new InternalServerErrorException(
         'Failed to retrieve promoted properties',
       );
     }
-    const mappedProperties = (data || []).map(this.mapDbRowToProperty);
+  
+    // Add debug logging to see raw data from view
+    this.logger.debug('Raw promoted properties data from view:', JSON.stringify(data?.[0], null, 2));
+    
+    // Fix: Use arrow function or bind this properly
+    const mappedProperties = (data || []).map((row) => this.mapDbRowToProperty(row));
     const uniquePropertiesMap = new Map<string, Property>();
     mappedProperties.forEach((p) => uniquePropertiesMap.set(p.id, p));
-    return Array.from(uniquePropertiesMap.values());
+    
+    const finalProperties = Array.from(uniquePropertiesMap.values());
+    
+    // Add debug logging to see mapped properties
+    this.logger.debug('Final mapped promoted properties:', JSON.stringify(finalProperties?.[0], null, 2));
+    
+    return finalProperties;
   }
+  
+  
 
   async findAll(queryDto: QueryPropertyDto): Promise<PropertyResponseDto> {
     const {
@@ -639,6 +660,16 @@ export class PropertiesService {
         !!baseDataFromDto.contact_whatsapp_number,
     };
 
+    // Extract bedrooms and bathrooms from details and add to main properties table
+    if (details) {
+      if ('bedrooms' in details) {
+        baseDataToInsert.bedrooms = details.bedrooms;
+      }
+      if ('bathrooms' in details) {
+        baseDataToInsert.bathrooms = details.bathrooms;
+      }
+    }
+
     const uploadedCloudinaryUrls: string[] = [];
     if (files && files.length > 0) {
       this.logger.log(`Uploading ${files.length} images to Cloudinary.`);
@@ -774,7 +805,7 @@ export class PropertiesService {
       deletedImagePublicIds = [],
       ...baseUpdatesFromDto
     } = updatePropertyDto;
-
+  
     this.logger.log(`Attempting to update property ID: ${id}`);
     const currentProperty: Property = await this.findOne(id);
     let finalImageUrls: string[] =
@@ -828,6 +859,15 @@ export class PropertiesService {
 
     const baseUpdatesToApply: any = { ...baseUpdatesFromDto };
     baseUpdatesToApply.images = finalImageUrls;
+
+    if (details) {
+      if ('bedrooms' in details) {
+        baseUpdatesToApply.bedrooms = details.bedrooms;
+      }
+      if ('bathrooms' in details) {
+        baseUpdatesToApply.bathrooms = details.bathrooms;
+      }
+    }
 
     if (baseUpdatesToApply.hasOwnProperty('use_phone_for_call')) {
       baseUpdatesToApply.use_phone_for_call =

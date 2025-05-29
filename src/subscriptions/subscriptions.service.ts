@@ -1,0 +1,381 @@
+// src/subscriptions/subscriptions.service.ts
+import {
+    Injectable,
+    Inject,
+    Logger,
+    NotFoundException,
+    InternalServerErrorException,
+    BadRequestException,
+  } from '@nestjs/common';
+  import { SupabaseClient } from '@supabase/supabase-js';
+  import { SUPABASE_CLIENT } from '../supabase/supabase.constants';
+  import { Cron, CronExpression } from '@nestjs/schedule';
+  import { CreateSubscriptionDto, SubscriptionType } from './dto/create-subscription.dto';
+  import { UpdateSubscriptionDto, SubscriptionStatus } from './dto/update-subscription.dto';
+  import { SubscriptionFeaturesDto } from './dto/subscription-features.dto';
+  
+  export interface UserSubscription {
+    id: string;
+    user_id: string;
+    subscription_type: string;
+    status: string;
+    starts_at: string;
+    expires_at: string;
+    payment_reference?: string;
+    amount_paid?: number;
+    currency: string;
+    created_at: string;
+    updated_at: string;
+    features?: SubscriptionFeaturesDto;
+  }
+  
+  export interface SubscriptionPlan {
+    type: SubscriptionType;
+    name: string;
+    description: string;
+    price_monthly: number;
+    price_yearly: number;
+    features: SubscriptionFeaturesDto;
+  }
+  
+  @Injectable()
+  export class SubscriptionsService {
+    private readonly logger = new Logger(SubscriptionsService.name);
+  
+    // Define subscription plans
+    private readonly subscriptionPlans: Record<SubscriptionType, SubscriptionPlan> = {
+      [SubscriptionType.BASIC]: {
+        type: SubscriptionType.BASIC,
+        name: 'Basic Plan',
+        description: 'Perfect for casual property seekers',
+        price_monthly: 50, // ZMW
+        price_yearly: 500,
+        features: {
+          max_saved_searches: 5,
+          priority_notifications: false,
+          advanced_filters: false,
+          property_alerts: true,
+          api_rate_limit: 100,
+          analytics_access: false,
+        },
+      },
+      [SubscriptionType.PREMIUM]: {
+        type: SubscriptionType.PREMIUM,
+        name: 'Premium Plan',
+        description: 'For serious property hunters',
+        price_monthly: 150,
+        price_yearly: 1500,
+        features: {
+          max_saved_searches: 20,
+          priority_notifications: true,
+          advanced_filters: true,
+          property_alerts: true,
+          api_rate_limit: 500,
+          analytics_access: true,
+        },
+      },
+      [SubscriptionType.ENTERPRISE]: {
+        type: SubscriptionType.ENTERPRISE,
+        name: 'Enterprise Plan',
+        description: 'For property professionals and businesses',
+        price_monthly: 500,
+        price_yearly: 5000,
+        features: {
+          max_saved_searches: -1, // Unlimited
+          priority_notifications: true,
+          advanced_filters: true,
+          property_alerts: true,
+          api_rate_limit: -1, // Unlimited
+          analytics_access: true,
+        },
+      },
+    };
+  
+    constructor(
+      @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient,
+    ) {}
+  
+    // Check and update expired subscriptions
+    @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+    async checkExpiredSubscriptions() {
+      this.logger.log('Checking for expired subscriptions...');
+  
+      try {
+        const { data: expiredSubscriptions, error } = await this.supabase
+          .from('user_subscriptions')
+          .select('*')
+          .eq('status', 'active')
+          .lt('expires_at', new Date().toISOString());
+  
+        if (error) {
+          this.logger.error(`Error fetching expired subscriptions: ${error.message}`);
+          return;
+        }
+  
+        if (!expiredSubscriptions || expiredSubscriptions.length === 0) {
+          this.logger.log('No expired subscriptions found');
+          return;
+        }
+  
+        this.logger.log(`Found ${expiredSubscriptions.length} expired subscriptions`);
+  
+        for (const subscription of expiredSubscriptions) {
+          await this.updateSubscriptionStatus(subscription.id, SubscriptionStatus.EXPIRED);
+          this.logger.log(`Marked subscription ${subscription.id} as expired for user ${subscription.user_id}`);
+        }
+      } catch (error) {
+        this.logger.error('Error in checkExpiredSubscriptions:', error);
+      }
+    }
+  
+    async getSubscriptionPlans(): Promise<SubscriptionPlan[]> {
+      return Object.values(this.subscriptionPlans);
+    }
+  
+    async getSubscriptionPlan(type: SubscriptionType): Promise<SubscriptionPlan> {
+      const plan = this.subscriptionPlans[type];
+      if (!plan) {
+        throw new NotFoundException(`Subscription plan ${type} not found`);
+      }
+      return plan;
+    }
+  
+    async createSubscription(userId: string, dto: CreateSubscriptionDto): Promise<UserSubscription> {
+      // Verify user exists and is a regular user
+      const { data: userProfile, error: profileError } = await this.supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', userId)
+        .single();
+  
+      if (profileError || !userProfile) {
+        throw new InternalServerErrorException('Failed to verify user profile');
+      }
+  
+      if (userProfile.role !== 'user') {
+        throw new BadRequestException('Subscriptions are only available for regular users');
+      }
+  
+      // Check if user already has an active subscription
+      const existingSubscription = await this.getUserActiveSubscription(userId);
+      if (existingSubscription) {
+        throw new BadRequestException('User already has an active subscription');
+      }
+  
+      // Validate subscription plan exists
+      const plan = await this.getSubscriptionPlan(dto.subscription_type);
+  
+      const startsAt = new Date();
+      const expiresAt = new Date();
+      expiresAt.setMonth(expiresAt.getMonth() + dto.duration_months);
+  
+      const { data, error } = await this.supabase
+        .from('user_subscriptions')
+        .insert({
+          user_id: userId,
+          subscription_type: dto.subscription_type,
+          starts_at: startsAt.toISOString(),
+          expires_at: expiresAt.toISOString(),
+          payment_reference: dto.payment_reference,
+          amount_paid: dto.amount_paid,
+          currency: dto.currency || 'ZMW',
+          status: 'active',
+        })
+        .select()
+        .single();
+  
+      if (error) {
+        this.logger.error(`Error creating subscription: ${error.message}`);
+        throw new InternalServerErrorException('Failed to create subscription');
+      }
+  
+      return { ...data, features: plan.features };
+    }
+  
+    async getUserSubscriptions(userId: string): Promise<UserSubscription[]> {
+      const { data, error } = await this.supabase
+        .from('user_subscriptions')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+  
+      if (error) {
+        this.logger.error(`Error fetching user subscriptions: ${error.message}`);
+        throw new InternalServerErrorException('Failed to fetch subscriptions');
+      }
+  
+      return (data || []).map(subscription => ({
+        ...subscription,
+        features: this.subscriptionPlans[subscription.subscription_type as SubscriptionType]?.features,
+      }));
+    }
+  
+    async getUserActiveSubscription(userId: string): Promise<UserSubscription | null> {
+      const { data, error } = await this.supabase
+        .from('user_subscriptions')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('status', 'active')
+        .gte('expires_at', new Date().toISOString())
+        .order('expires_at', { ascending: false })
+        .maybeSingle();
+  
+      if (error) {
+        this.logger.error(`Error fetching user active subscription: ${error.message}`);
+        throw new InternalServerErrorException('Failed to fetch active subscription');
+      }
+  
+      if (!data) return null;
+  
+      return {
+        ...data,
+        features: this.subscriptionPlans[data.subscription_type as SubscriptionType]?.features,
+      };
+    }
+  
+    async isUserSubscribed(userId: string): Promise<boolean> {
+      const subscription = await this.getUserActiveSubscription(userId);
+      return !!subscription;
+    }
+  
+    async getUserSubscriptionFeatures(userId: string): Promise<SubscriptionFeaturesDto | null> {
+      const subscription = await this.getUserActiveSubscription(userId);
+      return subscription?.features || null;
+    }
+  
+    async updateSubscription(
+      userId: string,
+      subscriptionId: string,
+      dto: UpdateSubscriptionDto,
+    ): Promise<UserSubscription> {
+      const { data, error } = await this.supabase
+        .from('user_subscriptions')
+        .update({
+          ...dto,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', subscriptionId)
+        .eq('user_id', userId)
+        .select()
+        .single();
+  
+      if (error) {
+        this.logger.error(`Error updating subscription: ${error.message}`);
+        throw new InternalServerErrorException('Failed to update subscription');
+      }
+  
+      if (!data) {
+        throw new NotFoundException('Subscription not found');
+      }
+  
+      return {
+        ...data,
+        features: this.subscriptionPlans[data.subscription_type as SubscriptionType]?.features,
+      };
+    }
+  
+    async cancelSubscription(userId: string, subscriptionId: string): Promise<void> {
+      await this.updateSubscription(userId, subscriptionId, {
+        status: SubscriptionStatus.CANCELLED,
+      });
+    }
+  
+    async renewSubscription(
+      userId: string,
+      subscriptionId: string,
+      duration_months: number,
+    ): Promise<UserSubscription> {
+      const subscription = await this.getSubscriptionById(userId, subscriptionId);
+      
+      const newExpiresAt = new Date(subscription.expires_at);
+      newExpiresAt.setMonth(newExpiresAt.getMonth() + duration_months);
+  
+      return this.updateSubscription(userId, subscriptionId, {
+        expires_at: newExpiresAt.toISOString(),
+        status: SubscriptionStatus.ACTIVE,
+      });
+    }
+  
+    async getSubscriptionById(userId: string, subscriptionId: string): Promise<UserSubscription> {
+      const { data, error } = await this.supabase
+        .from('user_subscriptions')
+        .select('*')
+        .eq('id', subscriptionId)
+        .eq('user_id', userId)
+        .single();
+  
+      if (error || !data) {
+        throw new NotFoundException('Subscription not found');
+      }
+  
+      return {
+        ...data,
+        features: this.subscriptionPlans[data.subscription_type as SubscriptionType]?.features,
+      };
+    }
+  
+    private async updateSubscriptionStatus(
+      subscriptionId: string,
+      status: SubscriptionStatus,
+    ): Promise<void> {
+      const { error } = await this.supabase
+        .from('user_subscriptions')
+        .update({
+          status,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', subscriptionId);
+  
+      if (error) {
+        this.logger.error(`Error updating subscription status: ${error.message}`);
+        throw new InternalServerErrorException('Failed to update subscription status');
+      }
+    }
+  
+    // Helper method to check if user can perform action based on subscription
+    async canUserPerformAction(
+      userId: string,
+      action: 'save_search' | 'priority_notifications' | 'advanced_filters',
+    ): Promise<boolean> {
+      const features = await this.getUserSubscriptionFeatures(userId);
+      
+      if (!features) return false;
+  
+      switch (action) {
+        case 'save_search':
+          return features.max_saved_searches > 0;
+        case 'priority_notifications':
+          return features.priority_notifications;
+        case 'advanced_filters':
+          return features.advanced_filters;
+        default:
+          return false;
+      }
+    }
+  
+    async getUserSavedSearchCount(userId: string): Promise<number> {
+      const { count, error } = await this.supabase
+        .from('saved_searches')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userId);
+  
+      if (error) {
+        this.logger.error(`Error counting saved searches: ${error.message}`);
+        return 0;
+      }
+  
+      return count || 0;
+    }
+  
+    async canUserSaveMoreSearches(userId: string): Promise<boolean> {
+      const features = await this.getUserSubscriptionFeatures(userId);
+      if (!features) return false;
+  
+      // Unlimited searches for enterprise
+      if (features.max_saved_searches === -1) return true;
+  
+      const currentCount = await this.getUserSavedSearchCount(userId);
+      return currentCount < features.max_saved_searches;
+    }
+  }
+  

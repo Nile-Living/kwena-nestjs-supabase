@@ -65,6 +65,9 @@ export class CreatePropertyDto {
   @IsNumber() @Min(0) price: number;
   @IsString() @IsNotEmpty() location: string;
 
+  @IsOptional() @IsInt() @Min(0) bedrooms?: number;
+  @IsOptional() @IsInt() @Min(0) bathrooms?: number;
+
   @IsOptional()
   @Transform(({ value }) => {
     if (typeof value === 'string') {

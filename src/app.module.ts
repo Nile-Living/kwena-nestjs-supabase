@@ -10,6 +10,9 @@ import { LencoModule } from './lenco/lenco.module';
 import { PromotionsModule } from './promotions/promotions.module';
 import { ProfilesModule } from './profiles/profiles.module';
 import { CloudinaryModule } from './cloudinary/cloudinary.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { SubscriptionsModule } from './subscriptions/subscriptions.module';
+import { PaymentsModule } from './payments/payments.module';
 
 
 @Module({
@@ -26,7 +29,10 @@ import { CloudinaryModule } from './cloudinary/cloudinary.module';
     PromotionsModule,
     SavedPropertiesModule,
     ProfilesModule,
-    CloudinaryModule
+    CloudinaryModule,
+    NotificationsModule,
+    SubscriptionsModule,
+    PaymentsModule
   ],
   controllers: [AppController],
   providers: [AppService],

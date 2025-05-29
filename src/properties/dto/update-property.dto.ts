@@ -1,10 +1,12 @@
 import { PartialType } from '@nestjs/mapped-types';
 import { CreatePropertyDto } from './create-property.dto';
-import { IsOptional, IsArray, IsString } from 'class-validator';
+import { IsOptional, IsArray, IsString, IsInt, Min } from 'class-validator';
 import { Transform } from 'class-transformer';
 
 
 export class UpdatePropertyDto extends PartialType(CreatePropertyDto) {
+  @IsOptional() @IsInt() @Min(0) bedrooms?: number;
+  @IsOptional() @IsInt() @Min(0) bathrooms?: number;
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
