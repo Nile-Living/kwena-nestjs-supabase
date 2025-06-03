@@ -14,6 +14,7 @@ import { PropertyResponseDto, Property } from './dto/property.response.dto';
 import { UpdatePropertyDto } from './dto/update-property.dto';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { CACHE_MANAGER, Cache } from '@nestjs/cache-manager';
+import { ProfilesService } from 'src/profiles/profiles.service';
 
 const REGULAR_PROPERTIES_PER_AD = 7;
 const RECENTLY_SHOWN_ADS_CACHE_KEY_PREFIX = 'user_promo_ads_cycle_';
@@ -28,6 +29,7 @@ export class PropertiesService {
     @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient,
     private readonly cloudinaryService: CloudinaryService,
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
+    private readonly profilesService: ProfilesService
   ) {}
 
   private getDetailTableName(category: string): string | null {
@@ -77,11 +79,16 @@ export class PropertiesService {
       apt_amenities,
       apt_parking_spaces,
       apt_security_features,
-      commercial_property_type_detail, // Fixed: was comm_property_type
+      commercial_property_type_detail,
       comm_square_meters,
       comm_parking_spaces,
       comm_amenities,
       comm_security_features,
+      user_role,
+      user_full_name,
+      user_avatar_url,
+      user_phone,
+      user_email,
     } = viewRow;
   
     let details: any = {};
@@ -119,7 +126,7 @@ export class PropertiesService {
         break;
       case 'commercial':
         details = {
-          property_type: commercial_property_type_detail, // Fixed: was comm_property_type
+          property_type: commercial_property_type_detail,
           square_meters: comm_square_meters,
           parking_spaces: comm_parking_spaces,
           amenities: comm_amenities,
@@ -128,7 +135,6 @@ export class PropertiesService {
         break;
     }
   
-    // Remove null/undefined values from details
     Object.keys(details).forEach(
       (key) =>
         (details[key] === null || details[key] === undefined) &&
@@ -156,10 +162,18 @@ export class PropertiesService {
       contact_whatsapp_number,
       use_phone_for_call: use_phone_for_call === true,
       use_whatsapp_for_message: use_whatsapp_for_message === true,
+      userProfile: user_id ? {
+        id: user_id,
+        full_name: user_full_name || 'Property Owner',
+        avatar_url: user_avatar_url, // Now correctly referenced
+        phone: user_phone || contact_phone_number, // Now correctly referenced
+        email: user_email, // Now correctly referenced
+        role: user_role || 'user',
+        created_at: null, // Assuming created_at for profile is not directly in properties_view or handled differently
+      } : null,
     };
   
-    // Add debug logging to see what details are being mapped
-    this.logger.debug(`Mapped property ${id} with details:`, JSON.stringify(details, null, 2));
+    this.logger.debug(`Mapped property ${id} with userProfile:`, JSON.stringify(mappedProperty.userProfile, null, 2));
     
     return mappedProperty;
   }
@@ -765,7 +779,7 @@ export class PropertiesService {
     return this.findOne(newBaseProperty.id);
   }
 
-  async findOne(id: string): Promise<Property> {
+  async findOne(id: string): Promise<Property & { userProfile?: any }> {
     if (!id) {
       throw new BadRequestException('Property ID cannot be empty');
     }
@@ -775,7 +789,7 @@ export class PropertiesService {
       .select('*')
       .eq('id', id)
       .maybeSingle();
-
+  
     if (error) {
       this.logger.error(
         `Error fetching property ${id} from view: ${error.message}`,
@@ -788,7 +802,27 @@ export class PropertiesService {
     if (!data) {
       throw new NotFoundException(`Property with ID ${id} not found`);
     }
-    return this.mapDbRowToProperty(data);
+  
+    const property = this.mapDbRowToProperty(data);
+  
+    if (property.userProfile && property.user_id) {
+      try {
+        const additionalUserProfile = await this.profilesService.getUserProfileById(property.user_id);
+        if (additionalUserProfile) {
+          property.userProfile = {
+            ...property.userProfile,
+            avatar_url: additionalUserProfile.avatar_url,
+            email: additionalUserProfile.email,
+            phone: additionalUserProfile.phone || property.userProfile.phone,
+          };
+        }
+      } catch (error) {
+        this.logger.warn(`Could not fetch additional user profile for user ${property.user_id}: ${error.message}`);
+      }
+    }
+  
+    this.logger.debug(`Final property with userProfile:`, JSON.stringify(property.userProfile, null, 2));
+    return property;
   }
 
   async update(

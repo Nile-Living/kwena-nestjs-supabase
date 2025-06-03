@@ -3,10 +3,11 @@ import { Module } from '@nestjs/common';
 import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
 import { LencoModule } from '../lenco/lenco.module';
+import { ZynleModule } from 'src/zynle/zynle.module';
 import { SubscriptionsModule } from 'src/subscriptions/subscriptions.module';
 
 @Module({
-  imports: [LencoModule, SubscriptionsModule],
+  imports: [LencoModule, ZynleModule, SubscriptionsModule],
   controllers: [PaymentsController],
   providers: [PaymentsService],
   exports: [PaymentsService],

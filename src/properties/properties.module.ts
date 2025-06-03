@@ -3,6 +3,7 @@ import { PropertiesController } from './properties.controller';
 import { PropertiesService } from './properties.service';
 import { CloudinaryModule } from 'src/cloudinary/cloudinary.module';
 import { CacheModule } from "@nestjs/cache-manager"
+import { ProfilesService } from 'src/profiles/profiles.service';
 
 @Module({
   imports: [CloudinaryModule,
@@ -13,6 +14,6 @@ import { CacheModule } from "@nestjs/cache-manager"
     })
   ],
   controllers: [PropertiesController],
-  providers: [PropertiesService]
+  providers: [PropertiesService, ProfilesService]
 })
 export class PropertiesModule {}

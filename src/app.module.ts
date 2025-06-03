@@ -13,7 +13,7 @@ import { CloudinaryModule } from './cloudinary/cloudinary.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 import { PaymentsModule } from './payments/payments.module';
-
+import { ZynleModule } from './zynle/zynle.module';
 
 @Module({
   imports: [
@@ -32,7 +32,8 @@ import { PaymentsModule } from './payments/payments.module';
     CloudinaryModule,
     NotificationsModule,
     SubscriptionsModule,
-    PaymentsModule
+    PaymentsModule,
+    ZynleModule
   ],
   controllers: [AppController],
   providers: [AppService],

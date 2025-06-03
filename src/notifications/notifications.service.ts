@@ -573,46 +573,88 @@ async checkNewPropertiesForSavedSearches() {
     }
   }
 
-  async registerDeviceToken(userId: string, dto: RegisterDeviceTokenDto): Promise<void> {
-    this.logger.log(`Attempting to register device token for user: ${userId}`);
+  async registerDeviceToken(userIdFromDto: string, dto: RegisterDeviceTokenDto): Promise<void> {
+    this.logger.log(
+      `Registering device token for DTO_userId: ${userIdFromDto}, token: ${dto.token}, platform: ${dto.platform}`,
+    );
+
+    let currentAuthUid: string | null = null;
+    try {
+      const { data: authCheck, error: rpcError } = await this.supabase.rpc(
+        'get_current_auth_uid',
+      );
+      if (rpcError) {
+        this.logger.warn(`RPC get_current_auth_uid error: ${rpcError.message}`);
+      } else {
+        currentAuthUid = authCheck;
+        this.logger.log(`Current Supabase client auth.uid() from RPC: ${currentAuthUid}`);
+      }
+    } catch (e: any) {
+      this.logger.error(`Exception calling RPC get_current_auth_uid: ${e.message}`);
+    }
 
     const { data: userProfile, error: profileError } = await this.supabase
       .from('profiles')
-      .select('role')
-      .eq('id', userId)
+      .select('id, role') // Select 'id' to ensure we use the confirmed ID
+      .eq('id', userIdFromDto)
       .single();
 
     if (profileError || !userProfile) {
-      this.logger.error(`Error fetching user profile: ${profileError?.message || 'Profile not found'}`);
-      throw new InternalServerErrorException('Failed to verify user profile');
+      this.logger.error(
+        `Profile fetch error for DTO_userId ${userIdFromDto}: ${profileError?.message || 'Profile not found'}`,
+      );
+      throw new InternalServerErrorException(
+        'Failed to verify user profile for device token registration.',
+      );
     }
 
-    if (!['user', 'agent'].includes(userProfile.role)) {
-      this.logger.error(`Invalid role '${userProfile.role}' for user ${userId}`);
-      throw new InternalServerErrorException('Invalid user role');
-    }
-
-    this.logger.log(`User ${userId} verified with role '${userProfile.role}', proceeding with device token registration`);
-
-    const { error } = await this.supabase.from('device_tokens').upsert(
-      {
-        user_id: userId,
-        token: dto.token,
-        platform: dto.platform,
-        updated_at: new Date().toISOString(),
-      },
-      {
-        onConflict: 'token',
-        ignoreDuplicates: false,
-      },
+    this.logger.log(
+      `User profile fetched: ID=${userProfile.id}, Role=${userProfile.role}. DTO_userId was ${userIdFromDto}. Match: ${userProfile.id === userIdFromDto}`,
     );
 
-    if (error) {
-      this.logger.error(`Error registering device token: ${error.message}`);
-      throw new InternalServerErrorException('Failed to register device token');
+    if (!['user', 'agent'].includes(userProfile.role)) {
+      this.logger.error(
+        `Invalid role '${userProfile.role}' for user ${userProfile.id} during device token registration.`,
+      );
+      throw new InternalServerErrorException('Invalid user role for device token registration.');
     }
 
-    this.logger.log(`Device token successfully registered for user ${userId}`);
+    // IMPORTANT: Use the userProfile.id obtained from the database for the upsert
+    const actualUserIdForDb = userProfile.id;
+
+    this.logger.log(
+      `User ${userIdFromDto} (Profile ID: ${actualUserIdForDb}) verified with role '${userProfile.role}'. Current auth UID: ${currentAuthUid}. Proceeding with registration.`,
+    );
+
+    const upsertPayload = {
+      user_id: actualUserIdForDb, // Use the confirmed ID from profiles table
+      token: dto.token,
+      platform: dto.platform,
+      updated_at: new Date().toISOString(),
+    };
+    this.logger.log(`Upserting to device_tokens with payload: ${JSON.stringify(upsertPayload)}`);
+
+    const { error: upsertError } = await this.supabase
+      .from('device_tokens')
+      .upsert(upsertPayload, {
+        onConflict: 'token', // Assumes 'token' column has a UNIQUE constraint
+        ignoreDuplicates: false,
+      });
+
+    if (upsertError) {
+      this.logger.error(
+        `Error registering device token for user ${actualUserIdForDb}: ${upsertError.message}`,
+        upsertError.stack,
+      );
+      this.logger.error(
+        `Upsert error details: code=${upsertError.code}, details=${upsertError.details}, hint=${upsertError.hint}`,
+      );
+      throw new InternalServerErrorException(
+        `Failed to register device token: ${upsertError.message}`,
+      );
+    }
+
+    this.logger.log(`Device token successfully registered for user ${actualUserIdForDb}`);
   }
 
   private propertyMatchesCriteria(property: any, criteria: any): boolean {

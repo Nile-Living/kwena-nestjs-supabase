@@ -99,4 +99,30 @@ export class ProfilesService {
 
     return { message: "Profile updated successfully." };
   }
+
+  async getUserProfileById(userId: string) {
+    this.logger.log(`Fetching profile for user ${userId}`);
+
+    const { data: profile, error} = await this.supabase
+    .from("profiles")
+    .select("id, full_name, avatar_url, phone, email, role, created_at")
+    .eq("id", userId)
+    .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') {
+        this.logger.warn(`Profile  not found for user ${userId}`);
+        return null;
+      }
+      this.logger.error(
+        `Failed to fetch profile for user ${userId}: ${error.message}`,
+      );
+      throw new InternalServerErrorException(
+        `Could not fetch profile: ${error.message}`,
+      );
+    }
+
+    this.logger.log(`Profile fetched successfully for user ${userId}`);
+    return profile;
+  }
 }
