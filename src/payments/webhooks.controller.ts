@@ -7,6 +7,7 @@ import {
     HttpStatus,
     Logger,
     Headers,
+    Req
   } from '@nestjs/common';
   import { ConfigService } from '@nestjs/config';
   import { PaymentsService } from './payments.service';
