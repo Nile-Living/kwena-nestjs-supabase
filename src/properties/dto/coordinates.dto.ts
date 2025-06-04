@@ -1,4 +1,4 @@
-import { IsLatitude, IsLongitude, IsNotEmpty } from 'class-validator';
+import { IsLatitude, IsLongitude, IsNotEmpty, IsString } from 'class-validator';
 
 export class CoordinatesDto {
   @IsNotEmpty()
@@ -9,3 +9,19 @@ export class CoordinatesDto {
   @IsLongitude()
   longitude: number;
 }
+
+export class NearbyPlaceDto {
+  @IsString()
+  @IsNotEmpty()
+  name: string;
+
+  @IsString()
+  @IsNotEmpty()
+  distance: string;
+
+  @IsString()
+  @IsNotEmpty()
+  icon: string;
+}
+
+

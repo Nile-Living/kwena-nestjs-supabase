@@ -3,7 +3,6 @@ import { CreatePropertyDto } from './create-property.dto';
 import { IsOptional, IsArray, IsString, IsInt, Min } from 'class-validator';
 import { Transform } from 'class-transformer';
 
-
 export class UpdatePropertyDto extends PartialType(CreatePropertyDto) {
   @IsOptional() @IsInt() @Min(0) bedrooms?: number;
   @IsOptional() @IsInt() @Min(0) bathrooms?: number;

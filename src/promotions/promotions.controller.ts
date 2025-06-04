@@ -1,4 +1,3 @@
-// src/promotions/promotions.controller.ts
 import {
   Controller,
   Post,
@@ -25,6 +24,20 @@ export class PromotionsController {
     return this.promotionsService.initiatePromotion(initiatePromotionDto);
   }
 
+  @Post('submit-otp')
+  @HttpCode(HttpStatus.OK)
+  async submitOtpForPromotion(
+    @Body() dto: { reference: string; otp: string },
+  ) {
+    if (!dto.reference || !dto.otp) {
+      throw new BadRequestException('Reference and OTP are required.');
+    }
+    return this.promotionsService.submitOtpForPromotion(
+      dto.reference,
+      dto.otp,
+    );
+  }
+
   @Post('verify/:reference')
   @HttpCode(HttpStatus.OK)
   async verifyPromotion(@Param('reference') reference: string) {
@@ -37,7 +50,13 @@ export class PromotionsController {
     @Body() payload: any,
     @Headers('x-lenco-signature') signature: string,
   ) {
-    this.logger.log('Received Lenco webhook request');
+    this.logger.log('Received Lenco webhook request for promotions');
+    // TODO: Implement Lenco signature verification
+    // const isValid = this.lencoService.verifyWebhookSignature(payload, signature);
+    // if (!isValid) {
+    //   this.logger.warn('Invalid Lenco webhook signature for promotions.');
+    //   throw new BadRequestException('Invalid signature');
+    // }
     await this.promotionsService.handleLencoWebhook(payload);
     return { received: true };
   }
@@ -48,8 +67,9 @@ export class PromotionsController {
     @Body() payload: any,
     @Headers() headers: any,
   ) {
-    this.logger.log('Received Zynle webhook request');
-    await this.promotionsService.handleZynleWebhook(payload);
-    return { received: true };
+    this.logger.log(
+      'Received Zynle webhook request for promotions, but Lenco is primary. Ignoring.',
+    );
+    return { received: true, message: 'Ignored, Lenco is primary.' };
   }
 }

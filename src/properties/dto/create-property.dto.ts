@@ -11,9 +11,10 @@ import {
   IsIn,
   IsPositive,
   IsPhoneNumber,
+  ArrayMinSize
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
-import { CoordinatesDto } from './coordinates.dto';
+import { CoordinatesDto, NearbyPlaceDto } from './coordinates.dto';
 
 const allowedCommercialSubTypes = [
   'Office', 'Retail', 'Warehouse', 'Industrial',
@@ -112,6 +113,18 @@ export class CreatePropertyDto {
     | CreateLandDetailsDto
     | CreateApartmentDetailsDto
     | CreateCommercialDetailsDto;
+
+  @IsArray()
+  @ArrayMinSize(3, { message: 'At least 3 nearby places are required' })
+  @ValidateNested({ each: true })
+  @Type(() => NearbyPlaceDto)
+  @Transform(({ value }) => {
+    if (typeof value === 'string') {
+      try { return JSON.parse(value); } catch (e) { return []; }
+    }
+    return value || [];
+  })
+  nearby_places: NearbyPlaceDto[];
 
   @IsOptional() @IsString() contact_phone_number?: string;
   @IsOptional() @IsString() contact_whatsapp_number?: string;

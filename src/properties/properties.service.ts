@@ -62,6 +62,7 @@ export class PropertiesService {
       contact_whatsapp_number,
       use_phone_for_call,
       use_whatsapp_for_message,
+      nearby_places,
       effective_bedrooms,
       effective_bathrooms,
       house_garages,
@@ -162,22 +163,22 @@ export class PropertiesService {
       contact_whatsapp_number,
       use_phone_for_call: use_phone_for_call === true,
       use_whatsapp_for_message: use_whatsapp_for_message === true,
+      nearby_places: nearby_places || [],
       userProfile: user_id ? {
         id: user_id,
         full_name: user_full_name || 'Property Owner',
-        avatar_url: user_avatar_url, // Now correctly referenced
-        phone: user_phone || contact_phone_number, // Now correctly referenced
-        email: user_email, // Now correctly referenced
+        avatar_url: user_avatar_url,
+        phone: user_phone || contact_phone_number,
+        email: user_email,
         role: user_role || 'user',
-        created_at: null, // Assuming created_at for profile is not directly in properties_view or handled differently
+        created_at: null,
       } : null,
     };
-  
+
     this.logger.debug(`Mapped property ${id} with userProfile:`, JSON.stringify(mappedProperty.userProfile, null, 2));
     
     return mappedProperty;
   }
-  
 
   async findPromoted(): Promise<Property[]> {
     this.logger.log('Fetching promoted properties');
@@ -194,23 +195,18 @@ export class PropertiesService {
       );
     }
   
-    // Add debug logging to see raw data from view
     this.logger.debug('Raw promoted properties data from view:', JSON.stringify(data?.[0], null, 2));
     
-    // Fix: Use arrow function or bind this properly
     const mappedProperties = (data || []).map((row) => this.mapDbRowToProperty(row));
     const uniquePropertiesMap = new Map<string, Property>();
     mappedProperties.forEach((p) => uniquePropertiesMap.set(p.id, p));
     
     const finalProperties = Array.from(uniquePropertiesMap.values());
     
-    // Add debug logging to see mapped properties
     this.logger.debug('Final mapped promoted properties:', JSON.stringify(finalProperties?.[0], null, 2));
     
     return finalProperties;
   }
-  
-  
 
   async findAll(queryDto: QueryPropertyDto): Promise<PropertyResponseDto> {
     const {
@@ -359,7 +355,6 @@ export class PropertiesService {
             });
           }
 
-          // 7. Search in commercial property types
           const commercialTypes = [
             'Office',
             'Retail',
@@ -379,7 +374,6 @@ export class PropertiesService {
             );
           }
 
-          // 8. Search in land details
           if (
             trimmedLocation.includes('residential') ||
             trimmedLocation.includes('commercial') ||
@@ -391,7 +385,6 @@ export class PropertiesService {
             );
           }
 
-          // 9. Search for bedroom/bathroom counts
           const bedroomMatch = trimmedLocation.match(
             /(\d+)\s*(bed|bedroom|br)/,
           );
@@ -408,7 +401,6 @@ export class PropertiesService {
             searchConditions.push(`effective_bathrooms.gte.${bathCount}`);
           }
 
-          // Apply the OR condition with all search possibilities
           query = query.or(searchConditions.join(','));
         }
       }
@@ -463,7 +455,6 @@ export class PropertiesService {
       return query;
     };
 
-    // Fetch promoted ad candidates that match ALL search criteria
     const promotedAdCandidatesQuery = buildBaseQuery(true).order('created_at', {
       ascending: false,
     });
@@ -485,10 +476,8 @@ export class PropertiesService {
       }),
     );
 
-    // Fetch ALL properties (both regular and promoted) that match the search criteria
-    let allPropertiesQuery = buildBaseQuery(); // No promoted filter - gets both regular and promoted
+    let allPropertiesQuery = buildBaseQuery();
 
-    // Apply sorting
     try {
       const [sortFieldInput, sortOrderInput = 'desc'] = sort.split('.');
       const sortOrder = sortOrderInput.toLowerCase() === 'asc' ? 'asc' : 'desc';
@@ -545,7 +534,6 @@ export class PropertiesService {
       );
     }
 
-    // Map all properties and separate regular from promoted
     const allProperties: Property[] = (allPropertiesData || []).map((p) => ({
       ...this.mapDbRowToProperty(p),
       isInjectedAd: false,
@@ -563,9 +551,7 @@ export class PropertiesService {
     }`;
     const userOffsetCacheKey = `${userCategoryCacheKey}_offset`;
 
-    // If we have promoted ads available for injection and regular properties to inject them into
     if (allPromotedAdsMasterList.length > 0 && regularProperties.length > 0) {
-      // Filter out ads that are already part of the current page's results
       const propertiesAlreadyInResults = new Set([
         ...regularProperties.map((p) => p.id),
         ...promotedPropertiesInResults.map((p) => p.id),
@@ -576,7 +562,6 @@ export class PropertiesService {
       );
 
       if (eligibleAdsForInjection.length > 0) {
-        // Get current global ad cycle index
         let globalAdCycleIndex: number =
           (await this.cacheManager.get<number>(userOffsetCacheKey)) || 0;
 
@@ -587,23 +572,18 @@ export class PropertiesService {
         const adsInjectedThisPage = new Set<string>();
         let regularItemCounter = 0;
 
-        // First, add all promoted properties that are already in results (they matched the search)
         promotedPropertiesInResults.forEach((promotedProp) => {
           finalPropertiesList.push(promotedProp);
         });
 
-        // Then inject regular properties with ads
         for (const regularProp of regularProperties) {
           finalPropertiesList.push(regularProp);
           regularItemCounter++;
 
-          // Inject ad after every REGULAR_PROPERTIES_PER_AD regular properties
           if (regularItemCounter % REGULAR_PROPERTIES_PER_AD === 0) {
-            // Get the next ad in the cycle
             const adIndex = globalAdCycleIndex % eligibleAdsForInjection.length;
             const adToInject = eligibleAdsForInjection[adIndex];
 
-            // Only inject if we haven't already used this ad on this page
             if (!adsInjectedThisPage.has(adToInject.id)) {
               finalPropertiesList.push(adToInject);
               adsInjectedThisPage.add(adToInject.id);
@@ -613,12 +593,10 @@ export class PropertiesService {
               );
             }
 
-            // Always advance the cycle index
             globalAdCycleIndex++;
           }
         }
 
-        // Persist the updated global cycle index
         await this.cacheManager.set(
           userOffsetCacheKey,
           globalAdCycleIndex,
@@ -629,11 +607,9 @@ export class PropertiesService {
           `Updated global ad cycle index to ${globalAdCycleIndex} for session ${effectiveSessionId}, category ${filters.category || 'all'}`,
         );
       } else {
-        // No additional ads to inject, just return all properties
         finalPropertiesList.push(...allProperties);
       }
     } else {
-      // No ads available for injection or no regular properties, just return all properties
       finalPropertiesList.push(...allProperties);
     }
 
@@ -649,7 +625,7 @@ export class PropertiesService {
     createPropertyDto: CreatePropertyDto,
     files?: Array<Express.Multer.File>,
   ): Promise<Property> {
-    const { details, ...baseDataFromDto } = createPropertyDto;
+    const { details, nearby_places, ...baseDataFromDto } = createPropertyDto;
     this.logger.log(
       `Attempting to create base property for category: ${baseDataFromDto.category}`,
     );
@@ -672,9 +648,9 @@ export class PropertiesService {
       use_whatsapp_for_message:
         baseDataFromDto.use_whatsapp_for_message ??
         !!baseDataFromDto.contact_whatsapp_number,
+      nearby_places: nearby_places || [],
     };
 
-    // Extract bedrooms and bathrooms from details and add to main properties table
     if (details) {
       if ('bedrooms' in details) {
         baseDataToInsert.bedrooms = details.bedrooms;
@@ -835,6 +811,7 @@ export class PropertiesService {
     }
     const {
       details,
+      nearby_places,
       existingImageUrls = [],
       deletedImagePublicIds = [],
       ...baseUpdatesFromDto
@@ -893,6 +870,10 @@ export class PropertiesService {
 
     const baseUpdatesToApply: any = { ...baseUpdatesFromDto };
     baseUpdatesToApply.images = finalImageUrls;
+
+    if (nearby_places !== undefined) {
+      baseUpdatesToApply.nearby_places = nearby_places;
+    }
 
     if (details) {
       if ('bedrooms' in details) {
