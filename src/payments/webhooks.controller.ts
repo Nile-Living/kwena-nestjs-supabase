@@ -29,7 +29,7 @@ export class WebhooksController {
     private readonly lencoService: LencoService,
     private readonly promotionsService: PromotionsService, 
   ) {
-    const lencoApiToken = this.configService.get<string>('LENCO_SECRET_KEY');
+    const lencoApiToken = this.configService.get<string>('LENCO_SIGNATURE_KEY');
     if (lencoApiToken) {
       this.lencoWebhookHashKey = crypto
         .createHash('sha256')
