@@ -12,7 +12,10 @@ import {
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../supabase/supabase.constants';
 import { LencoService } from '../lenco/lenco.service';
-import { InitiatePromotionDto, PaymentMethod } from './dto/initiate-promotion.dto';
+import {
+  InitiatePromotionDto,
+  PaymentMethod,
+} from './dto/initiate-promotion.dto';
 import { PaymentProvider } from '../payments/enums/payment-provider.enums';
 import { ConfigService } from '@nestjs/config';
 import { v4 as uuidv4 } from 'uuid';
@@ -23,6 +26,10 @@ const PROMOTION_PLANS = {
   '14days': { durationDays: 14, price: 9.0, currency: 'ZMW' },
   '1month': { durationDays: 30, price: 15.0, currency: 'ZMW' },
 };
+
+const INITIAL_POLLING_DELAY_MS = 30000; // 30 seconds for the first poll
+const MAX_POLLING_ATTEMPTS = 4;
+const POLLING_BACKOFF_FACTOR = 1.5; // Increase delay by this factor for subsequent polls
 
 @Injectable()
 export class PromotionsService {
@@ -69,7 +76,9 @@ export class PromotionsService {
       throw new BadRequestException('Lenco payment provider is required.');
     }
     if (dto.paymentMethod === PaymentMethod.CARD) {
-        throw new BadRequestException('Card payments via Lenco are not directly supported for promotions yet.');
+      throw new BadRequestException(
+        'Card payments via Lenco are not directly supported for promotions yet.',
+      );
     }
 
     if (!planDetails) {
@@ -127,7 +136,7 @@ export class PromotionsService {
         )
       ) {
         throw new ConflictException(
-          `Property ${propertyId} has a promotion currently in '${existingPromotion.payment_status}' status. Please complete or wait for the existing payment process.`,
+          `Property ${propertyId} has a promotion currently in '${existingPromotion.payment_status}' status. Please complete or wait for the existing payment process, or try verifying its status.`,
         );
       }
     }
@@ -187,6 +196,10 @@ export class PromotionsService {
         `Lenco promotion initiation for ref ${paymentReference}: status ${currentLencoStatus}, Lenco Ref: ${lencoReference}`,
       );
 
+      if (currentLencoStatus === 'pay-offline') {
+        this.scheduleStatusPoll(paymentReference, 1, INITIAL_POLLING_DELAY_MS);
+      }
+
       return {
         provider: PaymentProvider.LENCO,
         status: currentLencoStatus,
@@ -208,12 +221,51 @@ export class PromotionsService {
     }
   }
 
+  private scheduleStatusPoll(
+    paymentReference: string,
+    attempt: number,
+    delayMs: number,
+  ) {
+    this.logger.log(
+      `Scheduling status poll (attempt ${attempt}/${MAX_POLLING_ATTEMPTS}) for 'pay-offline' promotion ref: ${paymentReference} in ${delayMs / 1000}s`,
+    );
+
+    setTimeout(async () => {
+      this.logger.log(
+        `Executing scheduled poll (attempt ${attempt}) for promotion ref: ${paymentReference}`,
+      );
+      try {
+        const result = await this.verifyAndActivatePromotion(paymentReference);
+
+        // If status is still pay-offline and we haven't reached max attempts, schedule next poll
+        if (
+          result.status === 'pay-offline' &&
+          attempt < MAX_POLLING_ATTEMPTS
+        ) {
+          const nextDelay = Math.min(delayMs * POLLING_BACKOFF_FACTOR, 300000); // Cap delay at 5 mins
+          this.scheduleStatusPoll(paymentReference, attempt + 1, nextDelay);
+        } else if (result.status === 'pay-offline' && attempt >= MAX_POLLING_ATTEMPTS) {
+            this.logger.warn(`Max polling attempts reached for promotion ref ${paymentReference}. Status remains 'pay-offline'. Relying on webhook or manual verification.`);
+        }
+      } catch (pollError: any) {
+        this.logger.error(
+          `Background polling (attempt ${attempt}) for promotion ref ${paymentReference} failed: ${pollError.message}`,
+          pollError.stack,
+        );
+        // Optionally, if error is transient and attempt < MAX_POLLING_ATTEMPTS, you could retry here too.
+        // For now, we stop polling on error.
+      }
+    }, delayMs);
+  }
+
   async submitOtpForPromotion(
     paymentReference: string,
     otp: string,
   ): Promise<any> {
     if (this.currentProvider !== PaymentProvider.LENCO) {
-      throw new BadRequestException('Lenco provider is required for OTP submission.');
+      throw new BadRequestException(
+        'Lenco provider is required for OTP submission.',
+      );
     }
     this.logger.log(
       `Submitting OTP for Lenco promotion: ref ${paymentReference}`,
@@ -228,8 +280,16 @@ export class PromotionsService {
         paymentReference,
       );
       if (!verificationResult) {
+        this.logger.warn(
+          `Lenco verification after OTP for ref ${paymentReference} did not return a result. Status might not have changed yet or an error occurred.`,
+        );
+        await this.updatePromotionStatus(
+          paymentReference,
+          'otp-verification-pending',
+          null,
+        );
         throw new BadRequestException(
-          'Failed to verify Lenco promotion status after OTP submission.',
+          'OTP submitted. Payment status verification is pending or inconclusive. Please check again shortly.',
         );
       }
 
@@ -242,7 +302,12 @@ export class PromotionsService {
 
       if (currentLencoStatus === 'successful') {
         await this.activatePromotionDates(paymentReference);
+      } else if (currentLencoStatus === 'pay-offline') {
+        // If OTP submission somehow leads back to pay-offline (unlikely but possible), restart polling
+        this.logger.warn(`Status became 'pay-offline' after OTP for ref ${paymentReference}. Restarting poll.`);
+        this.scheduleStatusPoll(paymentReference, 1, INITIAL_POLLING_DELAY_MS);
       }
+
 
       this.logger.log(
         `Lenco promotion status after OTP for ref ${paymentReference}: ${currentLencoStatus}`,
@@ -256,9 +321,20 @@ export class PromotionsService {
     } catch (error: any) {
       this.logger.error(
         `Lenco OTP submission/verification for promotion ref ${paymentReference} failed:`,
-        error,
+        error.message,
+        error.stack,
       );
-      await this.updatePromotionStatus(paymentReference, 'failed', null);
+      if (
+        !(
+          error instanceof HttpException &&
+          error.getStatus() === HttpStatus.BAD_REQUEST
+        )
+      ) {
+        // Avoid setting to 'failed' if it's a recoverable error or just a verification issue
+        // unless Lenco explicitly returns a 'failed' status.
+        // Consider a more specific status like 'otp-failed' if Lenco indicates OTP was wrong.
+      }
+      if (error instanceof HttpException) throw error;
       throw new InternalServerErrorException(
         error.message || 'Lenco OTP processing for promotion failed',
       );
@@ -269,7 +345,7 @@ export class PromotionsService {
     const { data: promotionToActivate, error: fetchError } =
       await this.supabase
         .from('promotions')
-        .select('id, plan_duration_days, property_id')
+        .select('id, plan_duration_days, property_id, payment_status, promotion_starts_at')
         .eq('payment_reference', paymentReference)
         .single();
 
@@ -279,9 +355,15 @@ export class PromotionsService {
           fetchError?.message || 'Not found'
         }`,
       );
+      if (!promotionToActivate) return;
       throw new InternalServerErrorException(
         'Failed to retrieve promotion details for activation.',
       );
+    }
+
+    if (promotionToActivate.payment_status === 'successful' && promotionToActivate.promotion_starts_at) {
+        this.logger.log(`Promotion ${promotionToActivate.id} (ref ${paymentReference}) is already active. Skipping date activation.`);
+        return;
     }
 
     const now = new Date();
@@ -306,16 +388,17 @@ export class PromotionsService {
         'Failed to activate promotion timing.',
       );
     }
-    
+
     const { error: propertyUpdateError } = await this.supabase
       .from('properties')
       .update({ is_promoted: true, promoted_until: expiresAt.toISOString() })
       .eq('id', promotionToActivate.property_id);
 
     if (propertyUpdateError) {
-        this.logger.error(`Failed to mark property ${promotionToActivate.property_id} as promoted: ${propertyUpdateError.message}`);
+      this.logger.error(
+        `Failed to mark property ${promotionToActivate.property_id} as promoted: ${propertyUpdateError.message}`,
+      );
     }
-
 
     this.logger.log(
       `Promotion ${
@@ -335,7 +418,7 @@ export class PromotionsService {
 
     const { data: promotion, error: findError } = await this.supabase
       .from('promotions')
-      .select('id, payment_status, lenco_reference')
+      .select('id, payment_status, lenco_reference, promotion_starts_at')
       .eq('payment_reference', paymentReference)
       .maybeSingle();
 
@@ -351,16 +434,21 @@ export class PromotionsService {
       );
     }
 
-    if (promotion.payment_status === 'successful') {
+    if (promotion.payment_status === 'successful' && promotion.promotion_starts_at) {
+      this.logger.log(
+        `Verify: Promotion ref ${paymentReference} is already active.`,
+      );
       return {
         status: 'successful',
         message: 'Promotion is already active.',
         lencoReference: promotion.lenco_reference,
       };
     }
-    
+
     if (this.currentProvider !== PaymentProvider.LENCO) {
-        throw new BadRequestException('Lenco provider is required for this operation.');
+      throw new BadRequestException(
+        'Lenco provider is required for this operation.',
+      );
     }
 
     const lencoVerification = await this.lencoService.verifyPayment(
@@ -369,13 +457,14 @@ export class PromotionsService {
 
     if (!lencoVerification) {
       this.logger.warn(
-        `Verify: Lenco verification failed for ref ${paymentReference}`,
+        `Verify: Lenco verification call for ref ${paymentReference} returned no data. Payment might not exist or an error occurred.`,
       );
-      await this.updatePromotionStatus(paymentReference, 'failed', promotion.lenco_reference);
-      throw new HttpException(
-        'Payment verification with Lenco failed or payment not found.',
-        HttpStatus.BAD_GATEWAY,
-      );
+      // Return current DB status if Lenco call is inconclusive
+      return {
+        status: promotion.payment_status, // Return the status from DB
+        message: 'Payment verification with Lenco inconclusive. Current status retained.',
+        lencoReference: promotion.lenco_reference,
+      };
     }
 
     const lencoStatus = lencoVerification.status.toLowerCase();
@@ -389,18 +478,14 @@ export class PromotionsService {
 
     if (lencoStatus === 'successful') {
       await this.activatePromotionDates(paymentReference);
-      return {
-        status: 'successful',
-        message: 'Promotion activated successfully via verification.',
-        lencoReference: lencoApiReference,
-      };
-    } else {
-      return {
-        status: lencoStatus,
-        message: `Lenco payment status: ${lencoStatus}`,
-        lencoReference: lencoApiReference,
-      };
     }
+    // No need to schedule another poll from here; the scheduleStatusPoll method handles retries.
+
+    return {
+      status: lencoStatus,
+      message: `Lenco payment status: ${lencoStatus}`,
+      lencoReference: lencoApiReference,
+    };
   }
 
   private async updatePromotionStatus(
@@ -452,17 +537,19 @@ export class PromotionsService {
     const statusFromWebhook = data.status?.toLowerCase();
 
     if (!paymentReference.startsWith('PROMO-')) {
-        this.logger.log(`Lenco webhook for ref ${paymentReference} is not a promotion. Ignoring.`);
-        return;
+      this.logger.log(
+        `Lenco webhook for ref ${paymentReference} is not a promotion. Ignoring.`,
+      );
+      return;
     }
-    
+
     this.logger.log(
       `Processing Lenco webhook event: ${eventType} for promotion_ref: ${paymentReference} with Lenco status: ${statusFromWebhook}`,
     );
 
     const { data: promotion, error: findError } = await this.supabase
       .from('promotions')
-      .select('id, payment_status')
+      .select('id, payment_status, promotion_starts_at')
       .eq('payment_reference', paymentReference)
       .maybeSingle();
 
@@ -479,41 +566,45 @@ export class PromotionsService {
       return;
     }
 
-    if (promotion.payment_status === 'successful' && statusFromWebhook === 'successful') {
+    if (promotion.payment_status === 'successful' && promotion.promotion_starts_at && statusFromWebhook === 'successful') {
       this.logger.log(
-        `Webhook: Promotion ref ${paymentReference} already successful. Ignoring redundant event.`,
+        `Webhook: Promotion ref ${paymentReference} already successful and activated. Ignoring redundant event.`,
       );
       return;
     }
 
     let internalStatusToSet = statusFromWebhook;
-    if (eventType.includes('collection.successful') || eventType.includes('collection.settled')) {
-        internalStatusToSet = 'successful';
+    if (
+      eventType.includes('collection.successful') ||
+      eventType.includes('collection.settled')
+    ) {
+      internalStatusToSet = 'successful';
     } else if (eventType.includes('collection.failed')) {
-        internalStatusToSet = 'failed';
+      internalStatusToSet = 'failed';
     }
-
 
     await this.updatePromotionStatus(
       paymentReference,
       internalStatusToSet,
-      lencoApiReference,
+      lencoApiReference || data.transactionReference,
     );
 
     if (internalStatusToSet === 'successful') {
-       try {
-          await this.activatePromotionDates(paymentReference);
-        } catch (error: any) {
-          this.logger.error(
-            `Webhook: Error during date activation for promotion ref ${paymentReference}: ${error.message}`,
-            error.stack,
-          );
-        }
+      try {
+        await this.activatePromotionDates(paymentReference);
+      } catch (error: any) {
+        this.logger.error(
+          `Webhook: Error during date activation for promotion ref ${paymentReference}: ${error.message}`,
+          error.stack,
+        );
+      }
     }
   }
-  
+
   async handleZynleWebhook(payload: any): Promise<void> {
-    this.logger.log('Zynle webhook received, but Lenco is the active provider for promotions. Ignoring.');
+    this.logger.log(
+      'Zynle webhook received, but Lenco is the active provider for promotions. Ignoring.',
+    );
     return;
   }
 }
