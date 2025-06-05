@@ -11,5 +11,6 @@ import { ConfigModule } from '@nestjs/config';
   imports: [SupabaseModule, LencoModule, ZynleModule, ConfigModule],
   controllers: [PromotionsController],
   providers: [PromotionsService],
+  exports: [PromotionsService]
 })
 export class PromotionsModule {}

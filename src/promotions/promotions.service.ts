@@ -19,9 +19,9 @@ import { v4 as uuidv4 } from 'uuid';
 import { addDays } from 'date-fns';
 
 const PROMOTION_PLANS = {
-  '7days': { durationDays: 7, price: 50.0, currency: 'ZMW' },
-  '14days': { durationDays: 14, price: 90.0, currency: 'ZMW' },
-  '1month': { durationDays: 30, price: 150.0, currency: 'ZMW' },
+  '7days': { durationDays: 7, price: 5.0, currency: 'ZMW' },
+  '14days': { durationDays: 14, price: 9.0, currency: 'ZMW' },
+  '1month': { durationDays: 30, price: 15.0, currency: 'ZMW' },
 };
 
 @Injectable()

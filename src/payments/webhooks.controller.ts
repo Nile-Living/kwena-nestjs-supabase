@@ -1,3 +1,4 @@
+// src/payments/webhooks.controller.ts
 import {
   Controller,
   Post,
@@ -11,127 +12,159 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
-import { PaymentProvider } from './enums/payment-provider.enums';
 import { SubscriptionType } from '../subscriptions/dto/create-subscription.dto';
-import { LencoService } from '../lenco/lenco.service'; // Import LencoService
+import { LencoService } from '../lenco/lenco.service';
+import * as crypto from 'crypto';
+import { FastifyRequest } from 'fastify';
+import { PromotionsService } from 'src/promotions/promotions.service'; // Add this line
 
 @Controller('webhooks')
 export class WebhooksController {
   private readonly logger = new Logger(WebhooksController.name);
-  private readonly currentProvider: PaymentProvider;
+  private readonly lencoWebhookHashKey: string;
 
   constructor(
     private readonly configService: ConfigService,
     private readonly subscriptionsService: SubscriptionsService,
-    private readonly lencoService: LencoService, // Inject LencoService
+    private readonly lencoService: LencoService,
+    private readonly promotionsService: PromotionsService, 
   ) {
-    this.currentProvider = this.configService.get<PaymentProvider>(
-      'PAYMENT_PROVIDER',
-      PaymentProvider.LENCO,
-    );
+    const lencoApiToken = this.configService.get<string>('LENCO_SECRET_KEY');
+    if (lencoApiToken) {
+      this.lencoWebhookHashKey = crypto
+        .createHash('sha256')
+        .update(lencoApiToken.trim())
+        .digest('hex');
+    } else {
+      this.logger.error(
+        'LENCO_SECRET_KEY is not configured. Webhook verification will fail.',
+      );
+      this.lencoWebhookHashKey = '';
+    }
   }
 
   @Post('lenco/callback')
   @HttpCode(HttpStatus.OK)
   async handleLencoCallback(
+    @Req() req: FastifyRequest,
     @Body() callbackData: any,
     @Headers('x-lenco-signature') signature: string,
   ) {
     this.logger.log(
-      `Received Lenco webhook for subscriptions: ${JSON.stringify(
-        callbackData,
-      )}`,
+      `Received Lenco webhook: ${JSON.stringify(callbackData)}`,
     );
 
-    // TODO: Implement Lenco signature verification
-    // const isValid = this.lencoService.verifyWebhookSignature(callbackData, signature);
-    // if (!isValid) {
-    //   this.logger.warn('Invalid Lenco webhook signature for subscriptions.');
-    //   throw new BadRequestException('Invalid signature');
-    // }
+    const rawRequestBody = (req as any).rawBodyString as string | undefined;
+
+    if (rawRequestBody === undefined) {
+      this.logger.error(
+        'Raw body string not available for Lenco webhook signature verification.',
+      );
+      throw new BadRequestException(
+        'Internal server error: Raw body string missing.',
+      );
+    }
+
+    const isValidSignature = this.lencoService.verifyWebhookSignature(
+      rawRequestBody,
+      signature,
+      this.lencoWebhookHashKey,
+    );
+
+    if (!isValidSignature && this.lencoWebhookHashKey) {
+      this.logger.warn('Invalid Lenco webhook signature.');
+      throw new BadRequestException('Invalid signature');
+    } else if (!this.lencoWebhookHashKey) {
+      this.logger.error(
+        'Webhook verification skipped due to missing LENCO_SECRET_KEY configuration.',
+      );
+    }
 
     const eventType = callbackData.event?.toLowerCase();
     const data = callbackData.data;
 
     if (!data || !data.reference || !data.status || !eventType) {
       this.logger.warn(
-        'Lenco subscription webhook missing critical data: reference, status, or event type.',
+        'Lenco webhook missing critical data: reference, status, or event type.',
       );
       return { status: 'error', message: 'Missing critical data' };
     }
-    
+
     const paymentReference = data.reference;
-
-    // Ignore if it's a promotion webhook
-    if (paymentReference.startsWith('PROMO-')) {
-        this.logger.log(`Lenco webhook for ref ${paymentReference} is a promotion. Subscription webhook ignoring.`);
-        return { status: 'ignored', message: 'Promotion event' };
-    }
-
-    const lencoApiReference = data.lencoReference;
-    const statusFromWebhook = data.status?.toLowerCase();
+    // const statusFromWebhook = data.status?.toLowerCase(); // statusFromWebhook is used inside service methods
 
     this.logger.log(
-      `Processing Lenco webhook event: ${eventType} for subscription_ref: ${paymentReference} with Lenco status: ${statusFromWebhook}`,
+      `Processing Lenco webhook event: ${eventType} for ref: ${paymentReference} with Lenco status: ${data.status?.toLowerCase()}`,
     );
 
-    const referenceMatch = paymentReference.match(/^SUB_([^_]+)_/);
-    if (!referenceMatch) {
-      this.logger.error(
-        `Lenco Webhook: Invalid reference format for subscription: ${paymentReference}`,
-      );
-      return { status: 'error', message: 'Invalid reference format' };
-    }
-    const userId = referenceMatch[1];
-
-    if (
-      eventType.includes('collection.successful') ||
-      eventType.includes('collection.settled') ||
-      statusFromWebhook === 'successful'
-    ) {
+    if (paymentReference.startsWith('PROMO-')) {
       this.logger.log(
-        `Lenco Webhook: Payment successful for user ${userId}, ref: ${paymentReference}`,
+        `Delegating promotion webhook for reference: ${paymentReference} to PromotionsService.`,
       );
-      try {
-        const existingSubscription =
-          await this.subscriptionsService.getUserActiveSubscription(userId);
-        if (
-          !existingSubscription ||
-          existingSubscription.payment_reference !== paymentReference ||
-          existingSubscription.status !== 'active'
-        ) {
-          await this.subscriptionsService.createSubscription(userId, {
-            subscription_type: SubscriptionType.BASIC,
-            duration_months: 1,
-            payment_reference: paymentReference,
-            amount_paid: parseFloat(data.amount || '129'),
-            currency: data.currency || 'ZMW',
-          });
-          this.logger.log(
-            `Lenco Webhook: Subscription created/updated for user ${userId}, ref: ${paymentReference}`,
-          );
-        } else {
+      await this.promotionsService.handleLencoWebhook(callbackData); // Modified line
+    } else if (paymentReference.startsWith('SUB_')) {
+      const referenceMatch = paymentReference.match(/^SUB_([^_]+)_/);
+      if (!referenceMatch) {
+        this.logger.error(
+          `Lenco Webhook: Invalid reference format for subscription: ${paymentReference}`,
+        );
+        return { status: 'error', message: 'Invalid reference format' };
+      }
+      const userId = referenceMatch[1];
+      const statusFromWebhook = data.status?.toLowerCase(); // Get status here for subscriptions
+
+      if (
+        eventType.includes('collection.successful') ||
+        eventType.includes('collection.settled') ||
+        statusFromWebhook === 'successful'
+      ) {
+        this.logger.log(
+          `Lenco Webhook: Subscription payment successful for user ${userId}, ref: ${paymentReference}`,
+        );
+        try {
+          const existingSubscription =
+            await this.subscriptionsService.getUserActiveSubscription(userId);
+          if (
+            !existingSubscription ||
+            existingSubscription.payment_reference !== paymentReference ||
+            existingSubscription.status !== 'active'
+          ) {
+            await this.subscriptionsService.createSubscription(userId, {
+              subscription_type: SubscriptionType.BASIC,
+              duration_months: 1,
+              payment_reference: paymentReference,
+              amount_paid: parseFloat(data.amount || '0'),
+              currency: data.currency || 'ZMW',
+            });
             this.logger.log(
-            `Lenco Webhook: Subscription already active for user ${userId}, ref: ${paymentReference}. No action needed.`,
+              `Lenco Webhook: Subscription created/updated for user ${userId}, ref: ${paymentReference}`,
+            );
+          } else {
+            this.logger.log(
+              `Lenco Webhook: Subscription already active for user ${userId}, ref: ${paymentReference}. No action needed.`,
+            );
+          }
+        } catch (error: any) {
+          this.logger.error(
+            `Lenco Webhook: Error creating/updating subscription for user ${userId}, ref ${paymentReference}:`,
+            error,
           );
         }
-      } catch (error: any) {
-        this.logger.error(
-          `Lenco Webhook: Error creating/updating subscription for user ${userId}, ref ${paymentReference}:`,
-          error,
+      } else if (
+        eventType.includes('collection.failed') ||
+        statusFromWebhook === 'failed'
+      ) {
+        this.logger.log(
+          `Lenco Webhook: Subscription payment failed for user ${userId}, ref: ${paymentReference}`,
+        );
+      } else {
+        this.logger.log(
+          `Lenco Webhook: Received status ${statusFromWebhook} for subscription user ${userId}, ref: ${paymentReference}. No specific action taken.`,
         );
       }
-    } else if (
-      eventType.includes('collection.failed') ||
-      statusFromWebhook === 'failed'
-    ) {
-      this.logger.log(
-        `Lenco Webhook: Payment failed for user ${userId}, ref: ${paymentReference}`,
-      );
-      // Optionally, update subscription status to 'failed' or handle accordingly
     } else {
-      this.logger.log(
-        `Lenco Webhook: Received status ${statusFromWebhook} for user ${userId}, ref: ${paymentReference}. No specific action taken.`,
+      this.logger.warn(
+        `Lenco Webhook: Unknown reference prefix for ${paymentReference}. Ignoring.`,
       );
     }
 

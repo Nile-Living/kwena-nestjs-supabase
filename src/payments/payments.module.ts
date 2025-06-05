@@ -6,9 +6,10 @@ import { LencoModule } from '../lenco/lenco.module';
 import { ZynleModule } from 'src/zynle/zynle.module';
 import { SubscriptionsModule } from 'src/subscriptions/subscriptions.module';
 import { WebhooksController } from './webhooks.controller';
+import { PromotionsModule } from 'src/promotions/promotions.module';
 
 @Module({
-  imports: [LencoModule, ZynleModule, SubscriptionsModule],
+  imports: [LencoModule, ZynleModule, SubscriptionsModule, PromotionsModule],
   controllers: [PaymentsController, WebhooksController],
   providers: [PaymentsService],
   exports: [PaymentsService],

@@ -6,22 +6,19 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import * as crypto from 'crypto';
 
-// --- Detailed Interfaces for Lenco API Responses ---
-
-// For /collections/status/:reference -> data.settlement
 interface LencoSettlementDetails {
   id: string;
   amountSettled: string;
   currency: string;
-  createdAt: string; // date-time
-  settledAt: string | null; // date-time | null
+  createdAt: string;
+  settledAt: string | null;
   status: 'pending' | 'settled';
   type: 'instant' | 'next-day';
   accountId: string;
 }
 
-// For /collections/status/:reference -> data.mobileMoneyDetails
 interface LencoMobileMoneyDetails {
   country: string;
   phone: string;
@@ -29,7 +26,6 @@ interface LencoMobileMoneyDetails {
   accountName: string | null;
 }
 
-// For /collections/status/:reference -> data.cardDetails
 interface LencoCardDetailsData {
   firstName: string | null;
   lastName: string | null;
@@ -38,17 +34,16 @@ interface LencoCardDetailsData {
   cardType: string | null;
 }
 
-// Updated interface for the 'data' object from /collections/status/:reference
 interface LencoVerifyResponseData {
   id: string;
-  initiatedAt: string; // date-time
-  completedAt: string | null; // date-time | null
+  initiatedAt: string;
+  completedAt: string | null;
   amount: string;
   fee: string | null;
   bearer: 'merchant' | 'customer';
   currency: string;
-  reference: string | null; // This is your original reference
-  lencoReference: string; // This is Lenco's transaction reference
+  reference: string | null;
+  lencoReference: string;
   type: 'card' | 'mobile-money' | 'bank-account' | null;
   status:
     | 'pending'
@@ -61,19 +56,16 @@ interface LencoVerifyResponseData {
   settlementStatus: 'pending' | 'settled' | null;
   settlement: LencoSettlementDetails | null;
   mobileMoneyDetails: LencoMobileMoneyDetails | null;
-  bankAccountDetails: any | null; // Define more strictly if structure is known
+  bankAccountDetails: any | null;
   cardDetails: LencoCardDetailsData | null;
 }
 
-// General Lenco API response structure
 interface LencoVerifyResponse {
   status: boolean;
   message: string;
-  data?: LencoVerifyResponseData; // data object is of the detailed type
-  // meta?: any; // if your API wrapper includes meta at this level
+  data?: LencoVerifyResponseData;
 }
 
-// --- Interfaces for Collection Initiation ---
 interface LencoCollectionRequestBody {
   amount: number;
   reference: string;
@@ -83,17 +75,12 @@ interface LencoCollectionRequestBody {
   bearer?: 'merchant' | 'customer';
 }
 
-// Interface for the 'data' object from /collections/mobile-money (initiation)
 interface LencoCollectionResponseData {
-  id: string; // Usually the Lenco Transaction ID
-  reference: string; // Your original reference
-  lencoReference: string; // Lenco's transaction reference
-  status: string; // e.g., "pending", "otp-required", "pay-offline"
-  amount: string; // Amount requested
-  // Add other fields if present in the initiation response data
-  // For example, Lenco docs show 'type', 'source', 'currency', 'bearer' etc.
-  // For mobile money initiation, the response schema is similar to the verify schema but might have fewer fields initially.
-  // The key is that `lencoReference` and `status` are present.
+  id: string;
+  reference: string;
+  lencoReference: string;
+  status: string;
+  amount: string;
 }
 
 interface LencoCollectionResponse {
@@ -102,15 +89,12 @@ interface LencoCollectionResponse {
   data?: LencoCollectionResponseData;
 }
 
-// --- Interfaces for OTP Submission ---
 interface LencoOtpSubmitBody {
   reference: string;
   otp: string;
 }
 
-// Interface for the 'data' object from /collections/mobile-money/submit-otp
 interface LencoOtpSubmitResponseData {
-  // This response is also similar to the collection/verify response structure
   id: string;
   initiatedAt: string;
   completedAt: string | null;
@@ -126,7 +110,7 @@ interface LencoOtpSubmitResponseData {
     | 'successful'
     | 'failed'
     | 'otp-required'
-    | 'pay-offline'; // After OTP, status might change
+    | 'pay-offline';
   source: 'api';
   reasonForFailure: string | null;
   settlementStatus: 'pending' | 'settled' | null;
@@ -146,16 +130,21 @@ export class LencoService {
   private readonly secretKey: string;
   private readonly publicKey: string;
   private readonly baseUrl: string;
-  private readonly verifyEndpointPrefix: string; // Changed from verifyEndpoint
+  private readonly verifyEndpointPrefix: string;
   private readonly collectionEndpoint = '/access/v2/collections/mobile-money';
   private readonly submitOtpEndpoint =
-    '/access/v2/collections/mobile-money/submit-otp'; 
+    '/access/v2/collections/mobile-money/submit-otp';
 
   constructor(private readonly configService: ConfigService) {
-    this.secretKey = this.configService.getOrThrow<string>('LENCO_SECRET_KEY').trim();
-    this.publicKey = this.configService.getOrThrow<string>('LENCO_PUBLIC_KEY').trim();
-    this.baseUrl = this.configService.getOrThrow<string>('LENCO_API_BASE_URL').trim();
-    // Assuming LENCO_VERIFY_ENDPOINT in .env is like '/access/v2/collections/status/'
+    this.secretKey = this.configService
+      .getOrThrow<string>('LENCO_SECRET_KEY')
+      .trim();
+    this.publicKey = this.configService
+      .getOrThrow<string>('LENCO_PUBLIC_KEY')
+      .trim();
+    this.baseUrl = this.configService
+      .getOrThrow<string>('LENCO_API_BASE_URL')
+      .trim();
     this.verifyEndpointPrefix = this.configService.getOrThrow<string>(
       'LENCO_VERIFY_ENDPOINT',
     );
@@ -240,10 +229,6 @@ export class LencoService {
           response.status || HttpStatus.BAD_GATEWAY,
         );
       }
-      // The 'data' object from OTP submit should also conform to a detailed structure
-      // For now, LencoOtpSubmitResponseData is a placeholder, update it based on actual Lenco response.
-      // It's likely very similar to LencoVerifyResponseData or LencoCollectionResponseData.
-      // For safety, let's assume it's similar to LencoVerifyResponseData for now.
       return responseData.data;
     } catch (error) {
       this.logger.error(
@@ -260,7 +245,6 @@ export class LencoService {
   async verifyPayment(
     reference: string,
   ): Promise<LencoVerifyResponseData | null> {
-    // Ensure verifyEndpointPrefix ends with a slash if it doesn't already
     const fullVerifyEndpoint = this.verifyEndpointPrefix.endsWith('/')
       ? `${this.verifyEndpointPrefix}${reference}`
       : `${this.verifyEndpointPrefix}/${reference}`;
@@ -286,18 +270,14 @@ export class LencoService {
       );
 
       if (!response.ok || !responseData.status) {
-        // If response is not ok OR Lenco status is false, but data might still exist (e.g. for a 'failed' transaction)
         this.logger.warn(
           `Lenco verification issue or non-successful Lenco status for ${reference}. HTTP Status: ${response.status}, Lenco Status: ${responseData.status}, Message: ${responseData.message}`,
         );
-        // Return data if it exists, even if Lenco status is false, so PaymentsService can see the actual Lenco status.
         return responseData.data || null;
       }
-      // If response.ok and responseData.status is true, and data exists
       if (responseData.data) {
         return responseData.data;
       }
-      // If response.ok and responseData.status is true, but no data (unlikely for this endpoint)
       this.logger.warn(
         `Lenco verification successful for ${reference} but no data returned.`,
       );
@@ -308,6 +288,62 @@ export class LencoService {
         error.stack,
       );
       return null;
+    }
+  }
+
+  public verifyWebhookSignature(
+    rawBody: string | Buffer,
+    signatureFromHeader: string,
+    webhookHashKey: string,
+  ): boolean {
+    if (!signatureFromHeader) {
+      this.logger.warn('Lenco webhook signature missing from header.');
+      return false;
+    }
+    if (!webhookHashKey) {
+      this.logger.error(
+        'Lenco webhook hash key not provided for verification.',
+      );
+      return false;
+    }
+    if (rawBody === undefined || rawBody === null) {
+      this.logger.warn(
+        'Raw body not provided for Lenco webhook signature verification.',
+      );
+      return false;
+    }
+
+    try {
+      const hmac = crypto.createHmac('sha512', webhookHashKey);
+      const computedSignature = hmac
+        .update(rawBody.toString())
+        .digest('hex');
+
+      const sigBuffer = Buffer.from(signatureFromHeader, 'hex');
+      const computedSigBuffer = Buffer.from(computedSignature, 'hex');
+
+      if (sigBuffer.length !== computedSigBuffer.length) {
+        this.logger.warn(
+          `Lenco webhook signature length mismatch. Received length: ${sigBuffer.length}, Computed length: ${computedSigBuffer.length}. Received Sig: ${signatureFromHeader}, Computed Sig: ${computedSignature}`,
+        );
+        return false;
+      }
+
+      const isValid = crypto.timingSafeEqual(sigBuffer, computedSigBuffer);
+
+      if (!isValid) {
+        this.logger.warn(
+          `Invalid Lenco webhook signature. Computed: ${computedSignature}, Received: ${signatureFromHeader}`,
+        );
+      }
+      return isValid;
+    } catch (error) {
+      this.logger.error(
+        'Error verifying Lenco webhook signature:',
+        error.message,
+        error.stack,
+      );
+      return false;
     }
   }
 }
