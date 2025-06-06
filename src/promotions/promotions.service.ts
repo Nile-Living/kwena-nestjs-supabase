@@ -22,8 +22,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { addDays } from 'date-fns';
 
 const PROMOTION_PLANS = {
-  '7days': { durationDays: 7, price: 5.0, currency: 'ZMW' },
-  '14days': { durationDays: 14, price: 9.0, currency: 'ZMW' },
+  '7days': { durationDays: 7, price: 1.0, currency: 'ZMW' },
+  '14days': { durationDays: 14, price: 1.0, currency: 'ZMW' },
   '1month': { durationDays: 30, price: 15.0, currency: 'ZMW' },
 };
 
@@ -244,8 +244,13 @@ export class PromotionsService {
         ) {
           const nextDelay = Math.min(delayMs * POLLING_BACKOFF_FACTOR, 300000); // Cap delay at 5 mins
           this.scheduleStatusPoll(paymentReference, attempt + 1, nextDelay);
-        } else if (result.status === 'pay-offline' && attempt >= MAX_POLLING_ATTEMPTS) {
-            this.logger.warn(`Max polling attempts reached for promotion ref ${paymentReference}. Status remains 'pay-offline'. Relying on webhook or manual verification.`);
+        } else if (
+          result.status === 'pay-offline' &&
+          attempt >= MAX_POLLING_ATTEMPTS
+        ) {
+          this.logger.warn(
+            `Max polling attempts reached for promotion ref ${paymentReference}. Status remains 'pay-offline'. Relying on webhook or manual verification.`,
+          );
         }
       } catch (pollError: any) {
         this.logger.error(
@@ -304,10 +309,11 @@ export class PromotionsService {
         await this.activatePromotionDates(paymentReference);
       } else if (currentLencoStatus === 'pay-offline') {
         // If OTP submission somehow leads back to pay-offline (unlikely but possible), restart polling
-        this.logger.warn(`Status became 'pay-offline' after OTP for ref ${paymentReference}. Restarting poll.`);
+        this.logger.warn(
+          `Status became 'pay-offline' after OTP for ref ${paymentReference}. Restarting poll.`,
+        );
         this.scheduleStatusPoll(paymentReference, 1, INITIAL_POLLING_DELAY_MS);
       }
-
 
       this.logger.log(
         `Lenco promotion status after OTP for ref ${paymentReference}: ${currentLencoStatus}`,
@@ -345,7 +351,9 @@ export class PromotionsService {
     const { data: promotionToActivate, error: fetchError } =
       await this.supabase
         .from('promotions')
-        .select('id, plan_duration_days, property_id, payment_status, promotion_starts_at')
+        .select(
+          'id, plan_duration_days, property_id, payment_status, promotion_starts_at',
+        )
         .eq('payment_reference', paymentReference)
         .single();
 
@@ -361,9 +369,14 @@ export class PromotionsService {
       );
     }
 
-    if (promotionToActivate.payment_status === 'successful' && promotionToActivate.promotion_starts_at) {
-        this.logger.log(`Promotion ${promotionToActivate.id} (ref ${paymentReference}) is already active. Skipping date activation.`);
-        return;
+    if (
+      promotionToActivate.payment_status === 'successful' &&
+      promotionToActivate.promotion_starts_at
+    ) {
+      this.logger.log(
+        `Promotion ${promotionToActivate.id} (ref ${paymentReference}) is already active. Skipping date activation.`,
+      );
+      return;
     }
 
     const now = new Date();
@@ -389,21 +402,26 @@ export class PromotionsService {
       );
     }
 
-    const { error: propertyUpdateError } = await this.supabase
-      .from('properties')
-      .update({ is_promoted: true, promoted_until: expiresAt.toISOString() })
-      .eq('id', promotionToActivate.property_id);
-
-    if (propertyUpdateError) {
-      this.logger.error(
-        `Failed to mark property ${promotionToActivate.property_id} as promoted: ${propertyUpdateError.message}`,
-      );
-    }
+    // [REMOVED] This block was causing the error because the 'properties' table
+    // does not have 'is_promoted' or 'promoted_until' columns. These values
+    // are derived in the 'properties_view' from the 'promotions' table, which
+    // we have correctly updated above.
+    //
+    // const { error: propertyUpdateError } = await this.supabase
+    //   .from('properties')
+    //   .update({ is_promoted: true, promoted_until: expiresAt.toISOString() })
+    //   .eq('id', promotionToActivate.property_id);
+    //
+    // if (propertyUpdateError) {
+    //   this.logger.error(
+    //     `Failed to mark property ${promotionToActivate.property_id} as promoted: ${propertyUpdateError.message}`,
+    //   );
+    // }
 
     this.logger.log(
       `Promotion ${
         promotionToActivate.id
-      } (ref ${paymentReference}) successfully activated. Expires: ${expiresAt.toISOString()}. Property ${promotionToActivate.property_id} marked as promoted.`,
+      } (ref ${paymentReference}) successfully activated. Expires: ${expiresAt.toISOString()}. The 'properties_view' will now reflect this change.`,
     );
   }
 
@@ -434,7 +452,10 @@ export class PromotionsService {
       );
     }
 
-    if (promotion.payment_status === 'successful' && promotion.promotion_starts_at) {
+    if (
+      promotion.payment_status === 'successful' &&
+      promotion.promotion_starts_at
+    ) {
       this.logger.log(
         `Verify: Promotion ref ${paymentReference} is already active.`,
       );
@@ -462,7 +483,8 @@ export class PromotionsService {
       // Return current DB status if Lenco call is inconclusive
       return {
         status: promotion.payment_status, // Return the status from DB
-        message: 'Payment verification with Lenco inconclusive. Current status retained.',
+        message:
+          'Payment verification with Lenco inconclusive. Current status retained.',
         lencoReference: promotion.lenco_reference,
       };
     }
@@ -566,7 +588,11 @@ export class PromotionsService {
       return;
     }
 
-    if (promotion.payment_status === 'successful' && promotion.promotion_starts_at && statusFromWebhook === 'successful') {
+    if (
+      promotion.payment_status === 'successful' &&
+      promotion.promotion_starts_at &&
+      statusFromWebhook === 'successful'
+    ) {
       this.logger.log(
         `Webhook: Promotion ref ${paymentReference} already successful and activated. Ignoring redundant event.`,
       );
