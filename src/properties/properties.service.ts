@@ -208,418 +208,433 @@ export class PropertiesService {
     return finalProperties;
   }
 
-  async findAll(queryDto: QueryPropertyDto): Promise<PropertyResponseDto> {
-    const {
-      page = 1,
-      pageSize = 10,
-      sort = 'created_at.desc',
-      sessionId,
-      ...filters
-    } = queryDto;
+async findAll(queryDto: QueryPropertyDto): Promise<PropertyResponseDto> {
+  const {
+    page = 1,
+    pageSize = 10,
+    sort = 'created_at.desc',
+    sessionId,
+    ...filters
+  } = queryDto;
 
-    const effectiveSessionId = sessionId || 'anonymous_global_session';
-    this.logger.debug(
-      `Using effectiveSessionId: ${effectiveSessionId} for ad cycle. Page: ${page}`,
-    );
+  const effectiveSessionId = sessionId || 'anonymous_global_session';
+  this.logger.debug(
+    `Using effectiveSessionId: ${effectiveSessionId} for ad cycle. Page: ${page}`,
+  );
 
-    const offset = (page - 1) * pageSize;
-    const from = offset;
-    const to = offset + pageSize - 1;
+  const offset = (page - 1) * pageSize;
+  const from = offset;
+  const to = offset + pageSize - 1;
 
-    if (from < 0 || to < from) {
-      return {
-        properties: [],
-        total: 0,
-        page: Number(page),
-        pageSize: Number(pageSize),
-      };
-    }
-
-    const buildBaseQuery = (isPromotedFilter?: boolean) => {
-      let query = this.supabase
-        .from('properties_view')
-        .select('*', { count: 'exact' });
-
-      if (isPromotedFilter !== undefined) {
-        query = query.eq('is_promoted', isPromotedFilter);
-      }
-
-      if (filters.category && filters.category !== 'all')
-        query = query.eq('category', filters.category);
-      if (
-        filters.propertyType &&
-        (filters.propertyType === 'rent' || filters.propertyType === 'sale')
-      )
-        query = query.eq('property_type', filters.propertyType);
-      if (filters.location) {
-        const trimmedLocation = filters.location.trim().toLowerCase();
-        if (trimmedLocation) {
-          const searchConditions: string[] = [];
-
-          searchConditions.push(`title.ilike.%${trimmedLocation}%`);
-          searchConditions.push(`location.ilike.%${trimmedLocation}%`);
-
-          const categoryMap: Record<string, string> = {
-            house: 'house',
-            houses: 'house',
-            apartment: 'apartment',
-            apartments: 'apartment',
-            flat: 'apartment',
-            flats: 'apartment',
-            land: 'land',
-            'vacant land': 'land',
-            plot: 'land',
-            plots: 'land',
-            commercial: 'commercial',
-            office: 'commercial',
-            retail: 'commercial',
-            shop: 'commercial',
-            farm: 'farm',
-            farms: 'farm',
-            farming: 'farm',
-            agricultural: 'farm',
-            industrial: 'industrial',
-            warehouse: 'industrial',
-            factory: 'industrial',
-            lodge: 'lodge',
-            lodges: 'lodge',
-            hotel: 'lodge',
-            guesthouse: 'lodge',
-          };
-
-          const matchedCategory = categoryMap[trimmedLocation];
-          if (matchedCategory) {
-            searchConditions.push(`category.eq.${matchedCategory}`);
-          }
-
-          if (
-            trimmedLocation.includes('rent') ||
-            trimmedLocation.includes('rental')
-          ) {
-            searchConditions.push(`property_type.eq.rent`);
-          }
-          if (
-            trimmedLocation.includes('sale') ||
-            trimmedLocation.includes('buy')
-          ) {
-            searchConditions.push(`property_type.eq.sale`);
-          }
-
-          searchConditions.push(`house_amenities.cs.{${trimmedLocation}}`);
-          searchConditions.push(`apt_amenities.cs.{${trimmedLocation}}`);
-          searchConditions.push(`comm_amenities.cs.{${trimmedLocation}}`);
-
-          searchConditions.push(
-            `house_security_features.cs.{${trimmedLocation}}`,
-          );
-          searchConditions.push(
-            `apt_security_features.cs.{${trimmedLocation}}`,
-          );
-          searchConditions.push(
-            `comm_security_features.cs.{${trimmedLocation}}`,
-          );
-
-          const amenityVariations: Record<string, string[]> = {
-            pool: ['Pool', 'Swimming Pool'],
-            'swimming pool': ['Pool', 'Swimming Pool'],
-            security: ['24hr Security', 'Security', 'Security Gate'],
-            '24hr security': ['24hr Security', 'Security'],
-            'security gate': ['Security Gate', 'Security'],
-            garden: ['Garden'],
-            garage: ['Garage'],
-            parking: ['Parking'],
-            internet: ['Fibre Internet'],
-            fibre: ['Fibre Internet'],
-            wifi: ['Fibre Internet'],
-            'air conditioning': ['Air Conditioning'],
-            aircon: ['Air Conditioning'],
-            ac: ['Air Conditioning'],
-            borehole: ['Borehole'],
-            water: ['Water Connection', 'Borehole'],
-            electricity: ['Electricity', 'Three Phase Power'],
-            power: ['Electricity', 'Three Phase Power'],
-            'boundary wall': ['Boundary Wall'],
-            wall: ['Boundary Wall'],
-            fenced: ['Fenced'],
-            fence: ['Fenced'],
-            'staff quarters': ['Staff Quarters'],
-            quarters: ['Staff Quarters'],
-          };
-
-          const matchedAmenities = amenityVariations[trimmedLocation];
-          if (matchedAmenities) {
-            matchedAmenities.forEach((amenity) => {
-              searchConditions.push(`house_amenities.cs.{${amenity}}`);
-              searchConditions.push(`apt_amenities.cs.{${amenity}}`);
-              searchConditions.push(`comm_amenities.cs.{${amenity}}`);
-            });
-          }
-
-          const commercialTypes = [
-            'Office',
-            'Retail',
-            'Warehouse',
-            'Industrial',
-            'Mixed-Use',
-            'Restaurant',
-          ];
-          const matchedCommercialType = commercialTypes.find(
-            (type) =>
-              type.toLowerCase() === trimmedLocation ||
-              type.toLowerCase().includes(trimmedLocation),
-          );
-          if (matchedCommercialType) {
-            searchConditions.push(
-              `comm_property_type.eq.${matchedCommercialType}`,
-            );
-          }
-
-          if (
-            trimmedLocation.includes('residential') ||
-            trimmedLocation.includes('commercial') ||
-            trimmedLocation.includes('agricultural') ||
-            trimmedLocation.includes('industrial')
-          ) {
-            searchConditions.push(
-              `land_intended_use.ilike.%${trimmedLocation}%`,
-            );
-          }
-
-          const bedroomMatch = trimmedLocation.match(
-            /(\d+)\s*(bed|bedroom|br)/,
-          );
-          if (bedroomMatch) {
-            const bedCount = parseInt(bedroomMatch[1]);
-            searchConditions.push(`effective_bedrooms.gte.${bedCount}`);
-          }
-
-          const bathroomMatch = trimmedLocation.match(
-            /(\d+)\s*(bath|bathroom|br)/,
-          );
-          if (bathroomMatch) {
-            const bathCount = parseInt(bathroomMatch[1]);
-            searchConditions.push(`effective_bathrooms.gte.${bathCount}`);
-          }
-
-          query = query.or(searchConditions.join(','));
-        }
-      }
-
-      if (filters.minPrice !== undefined)
-        query = query.gte('price', filters.minPrice);
-      if (filters.maxPrice !== undefined)
-        query = query.lte('price', filters.maxPrice);
-      if (filters.user_id) query = query.eq('user_id', filters.user_id);
-      if (filters.agent_id) query = query.eq('agent_id', filters.agent_id);
-      if (filters.status && filters.status !== 'all')
-        query = query.eq('status', filters.status);
-      if (filters.bedrooms !== undefined && filters.bedrooms > 0)
-        query = query.gte('effective_bedrooms', filters.bedrooms);
-      if (filters.bathrooms !== undefined && filters.bathrooms > 0)
-        query = query.gte('effective_bathrooms', filters.bathrooms);
-      if (filters.garages !== undefined && filters.garages > 0)
-        query = query.gte('house_garages', filters.garages);
-      if (filters.house_parkings !== undefined && filters.house_parkings > 0)
-        query = query.gte('house_parkings', filters.house_parkings);
-      if (filters.parking_spaces !== undefined && filters.parking_spaces > 0)
-        query = query.gte('effective_parking_spaces', filters.parking_spaces);
-      if (filters.min_size_sqm !== undefined)
-        query = query.gte('land_size_sqm', filters.min_size_sqm);
-      if (filters.max_size_sqm !== undefined)
-        query = query.lte('land_size_sqm', filters.max_size_sqm);
-      if (filters.min_square_meters !== undefined)
-        query = query.gte('effective_square_meters', filters.min_square_meters);
-      if (filters.max_square_meters !== undefined)
-        query = query.lte('effective_square_meters', filters.max_square_meters);
-      if (filters.legal_status)
-        query = query.eq('land_legal_status', filters.legal_status);
-      if (filters.intended_use)
-        query = query.eq('land_intended_use', filters.intended_use);
-      if (filters.road_access !== undefined)
-        query = query.eq('land_road_access', filters.road_access);
-      if (filters.water_supply)
-        query = query.eq('land_water_supply', filters.water_supply);
-      if (filters.electricity_available !== undefined)
-        query = query.eq(
-          'land_electricity_available',
-          filters.electricity_available,
-        );
-      if (filters.fenced !== undefined)
-        query = query.eq('land_fenced', filters.fenced);
-      if (filters.commercial_property_type)
-        query = query.eq(
-          'comm_property_type',
-          filters.commercial_property_type,
-        );
-
-      return query;
-    };
-
-    const promotedAdCandidatesQuery = buildBaseQuery(true).order('created_at', {
-      ascending: false,
-    });
-
-    const { data: promotedAdCandidatesData, error: promotedError } =
-      await promotedAdCandidatesQuery;
-
-    if (promotedError) {
-      this.logger.error(
-        `Error fetching promoted ad candidates: ${promotedError.message}`,
-        promotedError.stack,
-      );
-    }
-
-    const allPromotedAdsMasterList = (promotedAdCandidatesData || []).map(
-      (p) => ({
-        ...this.mapDbRowToProperty(p),
-        isInjectedAd: true,
-      }),
-    );
-
-    let allPropertiesQuery = buildBaseQuery();
-
-    try {
-      const [sortFieldInput, sortOrderInput = 'desc'] = sort.split('.');
-      const sortOrder = sortOrderInput.toLowerCase() === 'asc' ? 'asc' : 'desc';
-      const sortColumnMapping: Record<string, string> = {
-        created_at: 'created_at',
-        price: 'price',
-        title: 'title',
-        bedrooms: 'effective_bedrooms',
-        bathrooms: 'effective_bathrooms',
-        garages: 'house_garages',
-        parkings: 'house_parkings',
-        parking_spaces: 'effective_parking_spaces',
-        size_sqm: 'land_size_sqm',
-        square_meters: 'effective_square_meters',
-        status: 'status',
-      };
-      const sortColumn = sortColumnMapping[sortFieldInput] || 'created_at';
-      allPropertiesQuery = allPropertiesQuery.order(sortColumn, {
-        ascending: sortOrder === 'asc',
-        nullsFirst: false,
-      });
-    } catch (e) {
-      this.logger.warn(
-        `Failed to parse sort parameter: ${sort}. Defaulting to created_at.desc`,
-      );
-      allPropertiesQuery = allPropertiesQuery.order('created_at', {
-        ascending: false,
-        nullsFirst: false,
-      });
-    }
-
-    allPropertiesQuery = allPropertiesQuery.range(from, to);
-    const {
-      data: allPropertiesData,
-      error: allPropertiesError,
-      count: totalCount,
-    } = await allPropertiesQuery;
-
-    if (allPropertiesError?.code === 'PGRST103') {
-      return {
-        properties: [],
-        total: 0,
-        page: Number(page),
-        pageSize: Number(pageSize),
-      };
-    }
-    if (allPropertiesError) {
-      this.logger.error(
-        `Error fetching all properties: ${allPropertiesError.message}`,
-        allPropertiesError.stack,
-      );
-      throw new InternalServerErrorException(
-        `Failed to retrieve properties: ${allPropertiesError.message}`,
-      );
-    }
-
-    const allProperties: Property[] = (allPropertiesData || []).map((p) => ({
-      ...this.mapDbRowToProperty(p),
-      isInjectedAd: false,
-    }));
-
-    const regularProperties = allProperties.filter((p) => !p.is_promoted);
-    const promotedPropertiesInResults = allProperties.filter(
-      (p) => p.is_promoted,
-    );
-
-    const finalPropertiesList: Property[] = [];
-
-    const userCategoryCacheKey = `${RECENTLY_SHOWN_ADS_CACHE_KEY_PREFIX}${effectiveSessionId}_${
-      filters.category || 'all'
-    }`;
-    const userOffsetCacheKey = `${userCategoryCacheKey}_offset`;
-
-    if (allPromotedAdsMasterList.length > 0 && regularProperties.length > 0) {
-      const propertiesAlreadyInResults = new Set([
-        ...regularProperties.map((p) => p.id),
-        ...promotedPropertiesInResults.map((p) => p.id),
-      ]);
-
-      const eligibleAdsForInjection = allPromotedAdsMasterList.filter(
-        (ad) => !propertiesAlreadyInResults.has(ad.id),
-      );
-
-      if (eligibleAdsForInjection.length > 0) {
-        let globalAdCycleIndex: number =
-          (await this.cacheManager.get<number>(userOffsetCacheKey)) || 0;
-
-        this.logger.debug(
-          `Starting with global ad cycle index: ${globalAdCycleIndex} for session ${effectiveSessionId}`,
-        );
-
-        const adsInjectedThisPage = new Set<string>();
-        let regularItemCounter = 0;
-
-        promotedPropertiesInResults.forEach((promotedProp) => {
-          finalPropertiesList.push(promotedProp);
-        });
-
-        for (const regularProp of regularProperties) {
-          finalPropertiesList.push(regularProp);
-          regularItemCounter++;
-
-          if (regularItemCounter % REGULAR_PROPERTIES_PER_AD === 0) {
-            const adIndex = globalAdCycleIndex % eligibleAdsForInjection.length;
-            const adToInject = eligibleAdsForInjection[adIndex];
-
-            if (!adsInjectedThisPage.has(adToInject.id)) {
-              finalPropertiesList.push(adToInject);
-              adsInjectedThisPage.add(adToInject.id);
-
-              this.logger.debug(
-                `Injected ad ${adToInject.id} (index ${adIndex}) at position ${finalPropertiesList.length} for session ${effectiveSessionId}`,
-              );
-            }
-
-            globalAdCycleIndex++;
-          }
-        }
-
-        await this.cacheManager.set(
-          userOffsetCacheKey,
-          globalAdCycleIndex,
-          ADS_CYCLE_TTL_SECONDS,
-        );
-
-        this.logger.debug(
-          `Updated global ad cycle index to ${globalAdCycleIndex} for session ${effectiveSessionId}, category ${filters.category || 'all'}`,
-        );
-      } else {
-        finalPropertiesList.push(...allProperties);
-      }
-    } else {
-      finalPropertiesList.push(...allProperties);
-    }
-
+  if (from < 0 || to < from) {
     return {
-      properties: finalPropertiesList,
-      total: totalCount ?? 0,
+      properties: [],
+      total: 0,
       page: Number(page),
       pageSize: Number(pageSize),
     };
   }
+
+  const buildBaseQuery = (isPromotedFilter?: boolean) => {
+    let query = this.supabase
+      .from('properties_view')
+      .select('*', { count: 'exact' });
+
+    if (isPromotedFilter !== undefined) {
+      query = query.eq('is_promoted', isPromotedFilter);
+    }
+
+    if (filters.category && filters.category !== 'all')
+      query = query.eq('category', filters.category);
+    if (
+      filters.propertyType &&
+      (filters.propertyType === 'rent' || filters.propertyType === 'sale')
+    )
+      query = query.eq('property_type', filters.propertyType);
+    if (filters.location) {
+      const trimmedLocation = filters.location.trim().toLowerCase();
+      if (trimmedLocation) {
+        const searchConditions: string[] = [];
+
+        searchConditions.push(`title.ilike.%${trimmedLocation}%`);
+        searchConditions.push(`location.ilike.%${trimmedLocation}%`);
+
+        const categoryMap: Record<string, string> = {
+          house: 'house',
+          houses: 'house',
+          apartment: 'apartment',
+          apartments: 'apartment',
+          flat: 'apartment',
+          flats: 'apartment',
+          land: 'land',
+          'vacant land': 'land',
+          plot: 'land',
+          plots: 'land',
+          commercial: 'commercial',
+          office: 'commercial',
+          retail: 'commercial',
+          shop: 'commercial',
+          farm: 'farm',
+          farms: 'farm',
+          farming: 'farm',
+          agricultural: 'farm',
+          industrial: 'industrial',
+          warehouse: 'industrial',
+          factory: 'industrial',
+          lodge: 'lodge',
+          lodges: 'lodge',
+          hotel: 'lodge',
+          guesthouse: 'lodge',
+        };
+
+        const matchedCategory = categoryMap[trimmedLocation];
+        if (matchedCategory) {
+          searchConditions.push(`category.eq.${matchedCategory}`);
+        }
+
+        if (
+          trimmedLocation.includes('rent') ||
+          trimmedLocation.includes('rental')
+        ) {
+          searchConditions.push(`property_type.eq.rent`);
+        }
+        if (
+          trimmedLocation.includes('sale') ||
+          trimmedLocation.includes('buy')
+        ) {
+          searchConditions.push(`property_type.eq.sale`);
+        }
+
+        searchConditions.push(`house_amenities.cs.{${trimmedLocation}}`);
+        searchConditions.push(`apt_amenities.cs.{${trimmedLocation}}`);
+        searchConditions.push(`comm_amenities.cs.{${trimmedLocation}}`);
+
+        searchConditions.push(
+          `house_security_features.cs.{${trimmedLocation}}`,
+        );
+        searchConditions.push(
+          `apt_security_features.cs.{${trimmedLocation}}`,
+        );
+        searchConditions.push(
+          `comm_security_features.cs.{${trimmedLocation}}`,
+        );
+
+        const amenityVariations: Record<string, string[]> = {
+          pool: ['Pool', 'Swimming Pool'],
+          'swimming pool': ['Pool', 'Swimming Pool'],
+          security: ['24hr Security', 'Security', 'Security Gate'],
+          '24hr security': ['24hr Security', 'Security'],
+          'security gate': ['Security Gate', 'Security'],
+          garden: ['Garden'],
+          garage: ['Garage'],
+          parking: ['Parking'],
+          internet: ['Fibre Internet'],
+          fibre: ['Fibre Internet'],
+          wifi: ['Fibre Internet'],
+          'air conditioning': ['Air Conditioning'],
+          aircon: ['Air Conditioning'],
+          ac: ['Air Conditioning'],
+          borehole: ['Borehole'],
+          water: ['Water Connection', 'Borehole'],
+          electricity: ['Electricity', 'Three Phase Power'],
+          power: ['Electricity', 'Three Phase Power'],
+          'boundary wall': ['Boundary Wall'],
+          wall: ['Boundary Wall'],
+          fenced: ['Fenced'],
+          fence: ['Fenced'],
+          'staff quarters': ['Staff Quarters'],
+          quarters: ['Staff Quarters'],
+        };
+
+        const matchedAmenities = amenityVariations[trimmedLocation];
+        if (matchedAmenities) {
+          matchedAmenities.forEach((amenity) => {
+            searchConditions.push(`house_amenities.cs.{${amenity}}`);
+            searchConditions.push(`apt_amenities.cs.{${amenity}}`);
+            searchConditions.push(`comm_amenities.cs.{${amenity}}`);
+          });
+        }
+
+        const commercialTypes = [
+          'Office',
+          'Retail',
+          'Warehouse',
+          'Industrial',
+          'Mixed-Use',
+          'Restaurant',
+        ];
+        const matchedCommercialType = commercialTypes.find(
+          (type) =>
+            type.toLowerCase() === trimmedLocation ||
+            type.toLowerCase().includes(trimmedLocation),
+        );
+        if (matchedCommercialType) {
+          searchConditions.push(
+            `comm_property_type.eq.${matchedCommercialType}`,
+          );
+        }
+
+        if (
+          trimmedLocation.includes('residential') ||
+          trimmedLocation.includes('commercial') ||
+          trimmedLocation.includes('agricultural') ||
+          trimmedLocation.includes('industrial')
+        ) {
+          searchConditions.push(
+            `land_intended_use.ilike.%${trimmedLocation}%`,
+          );
+        }
+
+        const bedroomMatch = trimmedLocation.match(
+          /(\d+)\s*(bed|bedroom|br)/,
+        );
+        if (bedroomMatch) {
+          const bedCount = parseInt(bedroomMatch[1]);
+          searchConditions.push(`effective_bedrooms.gte.${bedCount}`);
+        }
+
+        const bathroomMatch = trimmedLocation.match(
+          /(\d+)\s*(bath|bathroom|br)/,
+        );
+        if (bathroomMatch) {
+          const bathCount = parseInt(bathroomMatch[1]);
+          searchConditions.push(`effective_bathrooms.gte.${bathCount}`);
+        }
+
+        query = query.or(searchConditions.join(','));
+      }
+    }
+
+    if (filters.minPrice !== undefined)
+      query = query.gte('price', filters.minPrice);
+    if (filters.maxPrice !== undefined)
+      query = query.lte('price', filters.maxPrice);
+    if (filters.user_id) query = query.eq('user_id', filters.user_id);
+    if (filters.agent_id) query = query.eq('agent_id', filters.agent_id);
+    if (filters.status && filters.status !== 'all')
+      query = query.eq('status', filters.status);
+    if (filters.bedrooms !== undefined && filters.bedrooms > 0)
+      query = query.gte('effective_bedrooms', filters.bedrooms);
+    if (filters.bathrooms !== undefined && filters.bathrooms > 0)
+      query = query.gte('effective_bathrooms', filters.bathrooms);
+    if (filters.garages !== undefined && filters.garages > 0)
+      query = query.gte('house_garages', filters.garages);
+    if (filters.house_parkings !== undefined && filters.house_parkings > 0)
+      query = query.gte('house_parkings', filters.house_parkings);
+    if (filters.parking_spaces !== undefined && filters.parking_spaces > 0)
+      query = query.gte('effective_parking_spaces', filters.parking_spaces);
+    if (filters.min_size_sqm !== undefined)
+      query = query.gte('land_size_sqm', filters.min_size_sqm);
+    if (filters.max_size_sqm !== undefined)
+      query = query.lte('land_size_sqm', filters.max_size_sqm);
+    if (filters.min_square_meters !== undefined)
+      query = query.gte('effective_square_meters', filters.min_square_meters);
+    if (filters.max_square_meters !== undefined)
+      query = query.lte('effective_square_meters', filters.max_square_meters);
+    if (filters.legal_status)
+      query = query.eq('land_legal_status', filters.legal_status);
+    if (filters.intended_use)
+      query = query.eq('land_intended_use', filters.intended_use);
+    if (filters.road_access !== undefined)
+      query = query.eq('land_road_access', filters.road_access);
+    if (filters.water_supply)
+      query = query.eq('land_water_supply', filters.water_supply);
+    if (filters.electricity_available !== undefined)
+      query = query.eq(
+        'land_electricity_available',
+        filters.electricity_available,
+      );
+    if (filters.fenced !== undefined)
+      query = query.eq('land_fenced', filters.fenced);
+    if (filters.commercial_property_type)
+      query = query.eq(
+        'comm_property_type',
+        filters.commercial_property_type,
+      );
+
+    return query;
+  };
+
+  // Fetch promoted ad candidates (for injection)
+  const promotedAdCandidatesQuery = buildBaseQuery(true).order('created_at', {
+    ascending: false,
+  });
+
+  const { data: promotedAdCandidatesData, error: promotedError } =
+    await promotedAdCandidatesQuery;
+
+  if (promotedError) {
+    this.logger.error(
+      `Error fetching promoted ad candidates: ${promotedError.message}`,
+      promotedError.stack,
+    );
+  }
+
+  const allPromotedAdsMasterList = (promotedAdCandidatesData || []).map(
+    (p) => ({
+      ...this.mapDbRowToProperty(p),
+      isInjectedAd: true,
+    }),
+  );
+
+  // Fetch only non-promoted properties for the main list
+  let allPropertiesQuery = buildBaseQuery(false); // Only fetch non-promoted properties
+
+  try {
+    const [sortFieldInput, sortOrderInput = 'desc'] = sort.split('.');
+    const sortOrder = sortOrderInput.toLowerCase() === 'asc' ? 'asc' : 'desc';
+    const sortColumnMapping: Record<string, string> = {
+      created_at: 'created_at',
+      price: 'price',
+      title: 'title',
+      bedrooms: 'effective_bedrooms',
+      bathrooms: 'effective_bathrooms',
+      garages: 'house_garages',
+      parkings: 'house_parkings',
+      parking_spaces: 'effective_parking_spaces',
+      size_sqm: 'land_size_sqm',
+      square_meters: 'effective_square_meters',
+      status: 'status',
+    };
+    const sortColumn = sortColumnMapping[sortFieldInput] || 'created_at';
+    allPropertiesQuery = allPropertiesQuery.order(sortColumn, {
+      ascending: sortOrder === 'asc',
+      nullsFirst: false,
+    });
+  } catch (e) {
+    this.logger.warn(
+      `Failed to parse sort parameter: ${sort}. Defaulting to created_at.desc`,
+    );
+    allPropertiesQuery = allPropertiesQuery.order('created_at', {
+      ascending: false,
+      nullsFirst: false,
+    });
+  }
+
+  allPropertiesQuery = allPropertiesQuery.range(from, to);
+  const {
+    data: allPropertiesData,
+    error: allPropertiesError,
+    count: totalCount,
+  } = await allPropertiesQuery;
+
+  if (allPropertiesError?.code === 'PGRST103') {
+    return {
+      properties: [],
+      total: 0,
+      page: Number(page),
+      pageSize: Number(pageSize),
+    };
+  }
+  if (allPropertiesError) {
+    this.logger.error(
+      `Error fetching all properties: ${allPropertiesError.message}`,
+      allPropertiesError.stack,
+    );
+    throw new InternalServerErrorException(
+      `Failed to retrieve properties: ${allPropertiesError.message}`,
+    );
+  }
+
+  // Since we only fetched non-promoted properties, all are regular
+  const regularProperties: Property[] = (allPropertiesData || []).map((p) => ({
+    ...this.mapDbRowToProperty(p),
+    isInjectedAd: false,
+  }));
+
+  const finalPropertiesList: Property[] = [];
+
+  // New cache keys for tracking shown ads
+  const SHOWN_ADS_CACHE_KEY_PREFIX = 'user_shown_ads_';
+  const SHOWN_ADS_TTL_SECONDS = 24 * 60 * 60; // 24 hours
+  
+  const userShownAdsCacheKey = `${SHOWN_ADS_CACHE_KEY_PREFIX}${effectiveSessionId}_${
+    filters.category || 'all'
+  }`;
+
+  if (allPromotedAdsMasterList.length > 0 && regularProperties.length > 0) {
+    // Get previously shown ads for this user/session
+    let shownAdIds: string[] = 
+      (await this.cacheManager.get<string[]>(userShownAdsCacheKey)) || [];
+
+    this.logger.debug(
+      `User ${effectiveSessionId} has previously seen ads: ${shownAdIds.join(', ')}`,
+    );
+
+    // Filter out ads that have already been shown
+    let unshownAds = allPromotedAdsMasterList.filter(
+      ad => !shownAdIds.includes(ad.id)
+    );
+
+    // If all ads have been shown, reset the cycle and start fresh
+    if (unshownAds.length === 0 && allPromotedAdsMasterList.length > 0) {
+      this.logger.debug(
+        `All promoted ads have been shown to user ${effectiveSessionId}, resetting cycle`,
+      );
+      shownAdIds = [];
+      unshownAds = [...allPromotedAdsMasterList];
+      
+      // Clear the cache to start fresh
+      await this.cacheManager.del(userShownAdsCacheKey);
+    }
+
+    if (unshownAds.length > 0) {
+      const adsInjectedThisPage = new Set<string>();
+      const newlyShownAdIds: string[] = [];
+      let regularItemCounter = 0;
+      let unshownAdIndex = 0;
+
+      // Process regular properties and inject unshown ads after every 7th property
+      for (const regularProp of regularProperties) {
+        finalPropertiesList.push(regularProp);
+        regularItemCounter++;
+
+        if (regularItemCounter % REGULAR_PROPERTIES_PER_AD === 0) {
+          const adToInject = unshownAds[unshownAdIndex % unshownAds.length];
+
+          if (!adsInjectedThisPage.has(adToInject.id)) {
+            finalPropertiesList.push(adToInject);
+            adsInjectedThisPage.add(adToInject.id);
+            newlyShownAdIds.push(adToInject.id);
+
+            this.logger.debug(
+              `Injected unshown ad ${adToInject.id} (${unshownAdIndex + 1}/${unshownAds.length} unshown) for session ${effectiveSessionId}`,
+            );
+
+            unshownAdIndex++;
+          }
+        }
+      }
+
+      // Update cache with newly shown ads
+      if (newlyShownAdIds.length > 0) {
+        const updatedShownAdIds = [...shownAdIds, ...newlyShownAdIds];
+        await this.cacheManager.set(
+          userShownAdsCacheKey,
+          updatedShownAdIds,
+          SHOWN_ADS_TTL_SECONDS,
+        );
+
+        this.logger.debug(
+          `Updated shown ads for user ${effectiveSessionId}: ${updatedShownAdIds.join(', ')}`,
+        );
+      }
+    } else {
+      // No unshown ads available, just add regular properties
+      finalPropertiesList.push(...regularProperties);
+    }
+  } else {
+    // No promoted ads available or no regular properties
+    finalPropertiesList.push(...regularProperties);
+  }
+
+  return {
+    properties: finalPropertiesList,
+    total: totalCount ?? 0,
+    page: Number(page),
+    pageSize: Number(pageSize),
+  };
+}
 
   async create(
     createPropertyDto: CreatePropertyDto,
