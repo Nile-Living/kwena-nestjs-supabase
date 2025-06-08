@@ -219,7 +219,7 @@ export class PaymentsService {
           subscription_type: SubscriptionType.BASIC,
           duration_months: 1,
           payment_reference: paymentReference,
-          amount_paid: amount || 129,
+          amount_paid: amount || 1,
           currency: 'ZMW',
         });
 
