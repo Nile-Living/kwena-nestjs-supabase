@@ -452,10 +452,34 @@ async findAll(queryDto: QueryPropertyDto): Promise<PropertyResponseDto> {
         filters.commercial_property_type,
       );
 
+    if (filters.amenities && Array.isArray(filters.amenities) && filters.amenities.length > 0) {
+      const amenityConditions: string[] = [];
+      
+      filters.amenities.forEach(amenity => {
+        amenityConditions.push(`house_amenities.cs.{${amenity}}`);
+        amenityConditions.push(`apt_amenities.cs.{${amenity}}`);
+        amenityConditions.push(`comm_amenities.cs.{${amenity}}`);
+      });
+      
+      if (amenityConditions.length > 0) {
+        query = query.or(amenityConditions.join(','));
+      }
+    }
+
+    if (filters.features && filters.features !== 'Any') {
+      const featureConditions: string[] = [];
+      featureConditions.push(`house_security_features.cs.{${filters.features}}`);
+      featureConditions.push(`apt_security_features.cs.{${filters.features}}`);
+      featureConditions.push(`comm_security_features.cs.{${filters.features}}`);
+      
+      if (featureConditions.length > 0) {
+        query = query.or(featureConditions.join(','));
+      }
+    }
+
     return query;
   };
 
-  // Fetch promoted ad candidates (for injection)
   const promotedAdCandidatesQuery = buildBaseQuery(true).order('created_at', {
     ascending: false,
   });
@@ -477,8 +501,7 @@ async findAll(queryDto: QueryPropertyDto): Promise<PropertyResponseDto> {
     }),
   );
 
-  // Fetch only non-promoted properties for the main list
-  let allPropertiesQuery = buildBaseQuery(false); // Only fetch non-promoted properties
+  let allPropertiesQuery = buildBaseQuery(false);
 
   try {
     const [sortFieldInput, sortOrderInput = 'desc'] = sort.split('.');
@@ -536,7 +559,6 @@ async findAll(queryDto: QueryPropertyDto): Promise<PropertyResponseDto> {
     );
   }
 
-  // Since we only fetched non-promoted properties, all are regular
   const regularProperties: Property[] = (allPropertiesData || []).map((p) => ({
     ...this.mapDbRowToProperty(p),
     isInjectedAd: false,
@@ -544,16 +566,14 @@ async findAll(queryDto: QueryPropertyDto): Promise<PropertyResponseDto> {
 
   const finalPropertiesList: Property[] = [];
 
-  // New cache keys for tracking shown ads
   const SHOWN_ADS_CACHE_KEY_PREFIX = 'user_shown_ads_';
-  const SHOWN_ADS_TTL_SECONDS = 24 * 60 * 60; // 24 hours
+  const SHOWN_ADS_TTL_SECONDS = 24 * 60 * 60;
   
   const userShownAdsCacheKey = `${SHOWN_ADS_CACHE_KEY_PREFIX}${effectiveSessionId}_${
     filters.category || 'all'
   }`;
 
   if (allPromotedAdsMasterList.length > 0 && regularProperties.length > 0) {
-    // Get previously shown ads for this user/session
     let shownAdIds: string[] = 
       (await this.cacheManager.get<string[]>(userShownAdsCacheKey)) || [];
 
@@ -561,12 +581,10 @@ async findAll(queryDto: QueryPropertyDto): Promise<PropertyResponseDto> {
       `User ${effectiveSessionId} has previously seen ads: ${shownAdIds.join(', ')}`,
     );
 
-    // Filter out ads that have already been shown
     let unshownAds = allPromotedAdsMasterList.filter(
       ad => !shownAdIds.includes(ad.id)
     );
 
-    // If all ads have been shown, reset the cycle and start fresh
     if (unshownAds.length === 0 && allPromotedAdsMasterList.length > 0) {
       this.logger.debug(
         `All promoted ads have been shown to user ${effectiveSessionId}, resetting cycle`,
@@ -574,7 +592,6 @@ async findAll(queryDto: QueryPropertyDto): Promise<PropertyResponseDto> {
       shownAdIds = [];
       unshownAds = [...allPromotedAdsMasterList];
       
-      // Clear the cache to start fresh
       await this.cacheManager.del(userShownAdsCacheKey);
     }
 
@@ -584,7 +601,6 @@ async findAll(queryDto: QueryPropertyDto): Promise<PropertyResponseDto> {
       let regularItemCounter = 0;
       let unshownAdIndex = 0;
 
-      // Process regular properties and inject unshown ads after every 7th property
       for (const regularProp of regularProperties) {
         finalPropertiesList.push(regularProp);
         regularItemCounter++;
@@ -606,7 +622,6 @@ async findAll(queryDto: QueryPropertyDto): Promise<PropertyResponseDto> {
         }
       }
 
-      // Update cache with newly shown ads
       if (newlyShownAdIds.length > 0) {
         const updatedShownAdIds = [...shownAdIds, ...newlyShownAdIds];
         await this.cacheManager.set(
@@ -620,11 +635,9 @@ async findAll(queryDto: QueryPropertyDto): Promise<PropertyResponseDto> {
         );
       }
     } else {
-      // No unshown ads available, just add regular properties
       finalPropertiesList.push(...regularProperties);
     }
   } else {
-    // No promoted ads available or no regular properties
     finalPropertiesList.push(...regularProperties);
   }
 

@@ -16,6 +16,7 @@ import { RegisterDeviceTokenDto } from './dto/register-device-token.dto';
 import { QueryNotificationsDto } from './dto/query-notifications.dto';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { Expo, ExpoPushMessage } from 'expo-server-sdk';
+import { ConfigService } from '@nestjs/config';
 
 export interface Notification {
   id: string;
@@ -67,19 +68,22 @@ export class NotificationsService {
   constructor(
     @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient,
     private readonly subscriptionsService: SubscriptionsService,
+    private readonly configService: ConfigService
   ) {}
 
   @Cron(CronExpression.EVERY_HOUR)
   async checkExpiringPromotions() {
     this.logger.log('Checking for expiring promotions...');
-  
+
     try {
       const oneDayFromNow = new Date();
       oneDayFromNow.setHours(oneDayFromNow.getHours() + 24);
-  
-      this.logger.log(`Looking for promotions expiring between now and ${oneDayFromNow.toISOString()}`);
-  
-      const { data: expiringPromotions, error } = await this.supabase
+
+      this.logger.log(
+        `Looking for promotions expiring between now and ${oneDayFromNow.toISOString()}`,
+      );
+
+      const { data: expiringPromotions, error } = (await this.supabase
         .from('promotions')
         .select(
           `
@@ -95,72 +99,98 @@ export class NotificationsService {
         )
         .eq('payment_status', 'successful')
         .lte('promotion_expires_at', oneDayFromNow.toISOString())
-        .gte('promotion_expires_at', new Date().toISOString()) as { data: PromotionWithProperty[] | null, error: any };
-  
+        .gte('promotion_expires_at', new Date().toISOString())) as {
+        data: PromotionWithProperty[] | null;
+        error: any;
+      };
+
       if (error) {
-        this.logger.error(`Error fetching expiring promotions: ${error.message}`);
+        this.logger.error(
+          `Error fetching expiring promotions: ${error.message}`,
+        );
         return;
       }
-  
-      this.logger.log(`Found ${expiringPromotions?.length || 0} expiring promotions`);
-  
+
+      this.logger.log(
+        `Found ${expiringPromotions?.length || 0} expiring promotions`,
+      );
+
       for (const promotion of expiringPromotions || []) {
         this.logger.log(`Processing promotion ${promotion.id}`);
-        
-        if (!promotion.properties || typeof promotion.properties !== 'object') {
-          this.logger.error(`No properties data found for promotion ${promotion.id}. Properties: ${JSON.stringify(promotion.properties)}`);
-          continue;
-        }
-  
-        const property = promotion.properties;
-        
-        if (!property.title || !property.user_id) {
-          this.logger.error(`Invalid property data for promotion ${promotion.id}. Property: ${JSON.stringify(property)}`);
-          continue;
-        }
-  
-        this.logger.log(`Processing promotion ${promotion.id} for property ${property.title}`);
 
-        const { data: existingNotification, error: notificationCheckError } = await this.supabase
-          .from('notifications')
-          .select('id')
-          .eq('type', 'promotion_expiring')
-          .contains('data', { promotion_id: promotion.id })
-          .maybeSingle();
-  
+        if (!promotion.properties || typeof promotion.properties !== 'object') {
+          this.logger.error(
+            `No properties data found for promotion ${promotion.id}. Properties: ${JSON.stringify(promotion.properties)}`,
+          );
+          continue;
+        }
+
+        const property = promotion.properties;
+
+        if (!property.title || !property.user_id) {
+          this.logger.error(
+            `Invalid property data for promotion ${promotion.id}. Property: ${JSON.stringify(property)}`,
+          );
+          continue;
+        }
+
+        this.logger.log(
+          `Processing promotion ${promotion.id} for property ${property.title}`,
+        );
+
+        const { data: existingNotification, error: notificationCheckError } =
+          await this.supabase
+            .from('notifications')
+            .select('id')
+            .eq('type', 'promotion_expiring')
+            .contains('data', { promotion_id: promotion.id })
+            .maybeSingle();
+
         if (notificationCheckError) {
-          this.logger.error(`Error checking existing notifications: ${notificationCheckError.message}`);
+          this.logger.error(
+            `Error checking existing notifications: ${notificationCheckError.message}`,
+          );
           continue;
         }
-  
+
         if (existingNotification) {
-          this.logger.log(`Notification already exists for promotion ${promotion.id}`);
+          this.logger.log(
+            `Notification already exists for promotion ${promotion.id}`,
+          );
           continue;
         }
-  
-        this.logger.log(`No existing notification found, fetching user profile for ${property.user_id}`);
-  
+
+        this.logger.log(
+          `No existing notification found, fetching user profile for ${property.user_id}`,
+        );
+
         const { data: userProfile, error: profileError } = await this.supabase
           .from('profiles')
           .select('id, role, full_name')
           .eq('id', property.user_id)
           .single();
-  
+
         if (profileError) {
-          this.logger.error(`Error fetching user profile for promotion ${promotion.id}: ${profileError.message}`);
+          this.logger.error(
+            `Error fetching user profile for promotion ${promotion.id}: ${profileError.message}`,
+          );
           continue;
         }
-  
-        this.logger.log(`User profile found: role=${userProfile?.role}, name=${userProfile?.full_name}`);
-  
+
+        this.logger.log(
+          `User profile found: role=${userProfile?.role}, name=${userProfile?.full_name}`,
+        );
+
         if (userProfile && userProfile.role === 'agent') {
           const expiresAt = new Date(promotion.promotion_expires_at);
           const hoursUntilExpiry = Math.ceil(
             (expiresAt.getTime() - new Date().getTime()) / (1000 * 60 * 60),
           );
-  
-          this.logger.log(`Creating notification for agent. Hours until expiry: ${hoursUntilExpiry}`);
-  
+
+          this.logger.log(
+            `Creating notification for agent. Hours until expiry: ${hoursUntilExpiry}`,
+          );
+
           try {
             await this.createNotification({
               user_id: property.user_id,
@@ -174,14 +204,20 @@ export class NotificationsService {
                 expires_at: promotion.promotion_expires_at,
               },
             });
-  
-            this.logger.log(`Notification created successfully for agent ${userProfile.full_name || 'Unknown'} for property: ${property.title}`);
+
+            this.logger.log(
+              `Notification created successfully for agent ${userProfile.full_name || 'Unknown'} for property: ${property.title}`,
+            );
           } catch (notificationError) {
-            this.logger.error(`Failed to create notification: ${notificationError.message}`);
+            this.logger.error(
+              `Failed to create notification: ${notificationError.message}`,
+            );
             this.logger.error(`Notification error details:`, notificationError);
           }
         } else {
-          this.logger.log(`Skipping notification for property ${property.title} - owner is not an agent (role: ${userProfile?.role || 'unknown'})`);
+          this.logger.log(
+            `Skipping notification for property ${property.title} - owner is not an agent (role: ${userProfile?.role || 'unknown'})`,
+          );
         }
       }
     } catch (error) {
@@ -190,116 +226,131 @@ export class NotificationsService {
     }
   }
 
- // In notifications.service.ts, update the checkNewPropertiesForSavedSearches method:
+  // In notifications.service.ts, update the checkNewPropertiesForSavedSearches method:
 
-@Cron(CronExpression.EVERY_10_MINUTES)
-async checkNewPropertiesForSavedSearches() {
-  this.logger.log('Checking new properties against saved searches...');
+  @Cron(CronExpression.EVERY_10_MINUTES)
+  async checkNewPropertiesForSavedSearches() {
+    this.logger.log('Checking new properties against saved searches...');
 
-  try {
-    const fifteenMinutesAgo = new Date();
-    fifteenMinutesAgo.setMinutes(fifteenMinutesAgo.getMinutes() - 15);
+    try {
+      const fifteenMinutesAgo = new Date();
+      fifteenMinutesAgo.setMinutes(fifteenMinutesAgo.getMinutes() - 15);
 
-    const { data: newProperties, error: propertiesError } = await this.supabase
-      .from('properties_view')
-      .select('*')
-      .gte('created_at', fifteenMinutesAgo.toISOString())
-      .eq('status', 'available');
+      const { data: newProperties, error: propertiesError } =
+        await this.supabase
+          .from('properties_view')
+          .select('*')
+          .gte('created_at', fifteenMinutesAgo.toISOString())
+          .eq('status', 'available');
 
-    if (propertiesError) {
-      this.logger.error(`Error fetching new properties: ${propertiesError.message}`);
-      return;
-    }
+      if (propertiesError) {
+        this.logger.error(
+          `Error fetching new properties: ${propertiesError.message}`,
+        );
+        return;
+      }
 
-    if (!newProperties || newProperties.length === 0) {
-      this.logger.log('No new properties found');
-      return;
-    }
+      if (!newProperties || newProperties.length === 0) {
+        this.logger.log('No new properties found');
+        return;
+      }
 
-    this.logger.log(`Found ${newProperties.length} new properties`);
+      this.logger.log(`Found ${newProperties.length} new properties`);
 
-    // First, get active saved searches
-    const { data: savedSearches, error: searchesError } = await this.supabase
-      .from('saved_searches')
-      .select('*')
-      .eq('is_active', true)
-      .eq('notification_enabled', true);
+      // First, get active saved searches
+      const { data: savedSearches, error: searchesError } = await this.supabase
+        .from('saved_searches')
+        .select('*')
+        .eq('is_active', true)
+        .eq('notification_enabled', true);
 
-    if (searchesError) {
-      this.logger.error(`Error fetching saved searches: ${searchesError.message}`);
-      return;
-    }
+      if (searchesError) {
+        this.logger.error(
+          `Error fetching saved searches: ${searchesError.message}`,
+        );
+        return;
+      }
 
-    if (!savedSearches || savedSearches.length === 0) {
-      this.logger.log('No active saved searches found');
-      return;
-    }
+      if (!savedSearches || savedSearches.length === 0) {
+        this.logger.log('No active saved searches found');
+        return;
+      }
 
-    // Get user profiles for the saved searches
-    const userIds = [...new Set(savedSearches.map(search => search.user_id))];
-    const { data: userProfiles, error: profilesError } = await this.supabase
-      .from('profiles')
-      .select('id, role')
-      .in('id', userIds)
-      .eq('role', 'user');
+      // Get user profiles for the saved searches
+      const userIds = [
+        ...new Set(savedSearches.map((search) => search.user_id)),
+      ];
+      const { data: userProfiles, error: profilesError } = await this.supabase
+        .from('profiles')
+        .select('id, role')
+        .in('id', userIds)
+        .eq('role', 'user');
 
-    if (profilesError) {
-      this.logger.error(`Error fetching user profiles: ${profilesError.message}`);
-      return;
-    }
+      if (profilesError) {
+        this.logger.error(
+          `Error fetching user profiles: ${profilesError.message}`,
+        );
+        return;
+      }
 
-    // Get active subscriptions for these users
-    const { data: userSubscriptions, error: subscriptionsError } = await this.supabase
-      .from('user_subscriptions')
-      .select('user_id, status, expires_at')
-      .in('user_id', userIds)
-      .eq('status', 'active')
-      .gte('expires_at', new Date().toISOString());
+      // Get active subscriptions for these users
+      const { data: userSubscriptions, error: subscriptionsError } =
+        await this.supabase
+          .from('user_subscriptions')
+          .select('user_id, status, expires_at')
+          .in('user_id', userIds)
+          .eq('status', 'active')
+          .gte('expires_at', new Date().toISOString());
 
-    if (subscriptionsError) {
-      this.logger.error(`Error fetching user subscriptions: ${subscriptionsError.message}`);
-      return;
-    }
+      if (subscriptionsError) {
+        this.logger.error(
+          `Error fetching user subscriptions: ${subscriptionsError.message}`,
+        );
+        return;
+      }
 
-    // Create lookup maps
-    const profilesMap = new Map(userProfiles?.map(p => [p.id, p]) || []);
-    const subscriptionsMap = new Map(userSubscriptions?.map(s => [s.user_id, s]) || []);
+      // Create lookup maps
+      const profilesMap = new Map(userProfiles?.map((p) => [p.id, p]) || []);
+      const subscriptionsMap = new Map(
+        userSubscriptions?.map((s) => [s.user_id, s]) || [],
+      );
 
-    // Filter saved searches to only include those from subscribed regular users
-    const eligibleSavedSearches = savedSearches.filter(search => {
-      const profile = profilesMap.get(search.user_id);
-      const subscription = subscriptionsMap.get(search.user_id);
-      return profile?.role === 'user' && subscription?.status === 'active';
-    });
+      // Filter saved searches to only include those from subscribed regular users
+      const eligibleSavedSearches = savedSearches.filter((search) => {
+        const profile = profilesMap.get(search.user_id);
+        const subscription = subscriptionsMap.get(search.user_id);
+        return profile?.role === 'user' && subscription?.status === 'active';
+      });
 
-    if (eligibleSavedSearches.length === 0) {
-      this.logger.log('No active saved searches from subscribed users found');
-      return;
-    }
+      if (eligibleSavedSearches.length === 0) {
+        this.logger.log('No active saved searches from subscribed users found');
+        return;
+      }
 
-    this.logger.log(`Found ${eligibleSavedSearches.length} eligible saved searches from subscribed users`);
+      this.logger.log(
+        `Found ${eligibleSavedSearches.length} eligible saved searches from subscribed users`,
+      );
 
-    for (const property of newProperties) {
-      for (const savedSearch of eligibleSavedSearches) {
-        if (this.propertyMatchesCriteria(property, savedSearch.criteria)) {
-          const { data: existingNotification } = await this.supabase
-            .from('search_notifications')
-            .select('id')
-            .eq('saved_search_id', savedSearch.id)
-            .eq('property_id', property.id)
-            .maybeSingle();
+      for (const property of newProperties) {
+        for (const savedSearch of eligibleSavedSearches) {
+          if (this.propertyMatchesCriteria(property, savedSearch.criteria)) {
+            const { data: existingNotification } = await this.supabase
+              .from('search_notifications')
+              .select('id')
+              .eq('saved_search_id', savedSearch.id)
+              .eq('property_id', property.id)
+              .maybeSingle();
 
-          if (!existingNotification) {
-            await this.notifyUserAboutMatch(savedSearch, property);
+            if (!existingNotification) {
+              await this.notifyUserAboutMatch(savedSearch, property);
+            }
           }
         }
       }
+    } catch (error) {
+      this.logger.error('Error in checkNewPropertiesForSavedSearches:', error);
     }
-  } catch (error) {
-    this.logger.error('Error in checkNewPropertiesForSavedSearches:', error);
   }
-}
-
 
   async createNotification(dto: CreateNotificationDto): Promise<Notification> {
     const { data: userProfile, error: profileError } = await this.supabase
@@ -309,13 +360,19 @@ async checkNewPropertiesForSavedSearches() {
       .single();
 
     if (profileError) {
-      this.logger.error(`Error fetching user profile for notification: ${profileError.message}`);
+      this.logger.error(
+        `Error fetching user profile for notification: ${profileError.message}`,
+      );
       throw new InternalServerErrorException('Failed to verify user profile');
     }
 
     if (userProfile.role !== 'agent') {
-      this.logger.warn(`Attempted to create notification for non-agent user: ${dto.user_id}`);
-      throw new InternalServerErrorException('Notifications are only available for agents');
+      this.logger.warn(
+        `Attempted to create notification for non-agent user: ${dto.user_id}`,
+      );
+      throw new InternalServerErrorException(
+        'Notifications are only available for agents',
+      );
     }
 
     const { data, error } = await this.supabase
@@ -359,7 +416,9 @@ async checkNewPropertiesForSavedSearches() {
     }
 
     if (userProfile.role !== 'user') {
-      this.logger.warn(`Attempted to create user notification for non-user: ${dto.user_id}`);
+      this.logger.warn(
+        `Attempted to create user notification for non-user: ${dto.user_id}`,
+      );
       return;
     }
 
@@ -399,7 +458,9 @@ async checkNewPropertiesForSavedSearches() {
     }
 
     if (!['user', 'agent'].includes(userProfile.role)) {
-      throw new InternalServerErrorException('Invalid user role for notifications');
+      throw new InternalServerErrorException(
+        'Invalid user role for notifications',
+      );
     }
 
     const { page = 1, pageSize = 20, unreadOnly = false } = query;
@@ -450,7 +511,9 @@ async checkNewPropertiesForSavedSearches() {
       .single();
 
     if (profileError || !['user', 'agent'].includes(userProfile.role)) {
-      throw new InternalServerErrorException('Unauthorized access to notifications');
+      throw new InternalServerErrorException(
+        'Unauthorized access to notifications',
+      );
     }
 
     const { error } = await this.supabase
@@ -461,7 +524,9 @@ async checkNewPropertiesForSavedSearches() {
 
     if (error) {
       this.logger.error(`Error marking notification as read: ${error.message}`);
-      throw new InternalServerErrorException('Failed to mark notification as read');
+      throw new InternalServerErrorException(
+        'Failed to mark notification as read',
+      );
     }
   }
 
@@ -473,7 +538,9 @@ async checkNewPropertiesForSavedSearches() {
       .single();
 
     if (profileError || !['user', 'agent'].includes(userProfile.role)) {
-      throw new InternalServerErrorException('Unauthorized access to notifications');
+      throw new InternalServerErrorException(
+        'Unauthorized access to notifications',
+      );
     }
 
     const { error } = await this.supabase
@@ -483,22 +550,34 @@ async checkNewPropertiesForSavedSearches() {
       .is('read_at', null);
 
     if (error) {
-      this.logger.error(`Error marking all notifications as read: ${error.message}`);
-      throw new InternalServerErrorException('Failed to mark all notifications as read');
+      this.logger.error(
+        `Error marking all notifications as read: ${error.message}`,
+      );
+      throw new InternalServerErrorException(
+        'Failed to mark all notifications as read',
+      );
     }
   }
 
-  async createSavedSearch(userId: string, dto: CreateSavedSearchDto): Promise<SavedSearch> {
-    const isSubscribed = await this.subscriptionsService.isUserSubscribed(userId);
+  async createSavedSearch(
+    userId: string,
+    dto: CreateSavedSearchDto,
+  ): Promise<SavedSearch> {
+    const isSubscribed =
+      await this.subscriptionsService.isUserSubscribed(userId);
     if (!isSubscribed) {
-      throw new BadRequestException('You need an active subscription to save searches');
+      throw new BadRequestException(
+        'You need an active subscription to save searches',
+      );
     }
 
-    const canSaveMore = await this.subscriptionsService.canUserSaveMoreSearches(userId);
+    const canSaveMore =
+      await this.subscriptionsService.canUserSaveMoreSearches(userId);
     if (!canSaveMore) {
-      const features = await this.subscriptionsService.getUserSubscriptionFeatures(userId);
+      const features =
+        await this.subscriptionsService.getUserSubscriptionFeatures(userId);
       throw new BadRequestException(
-        `You have reached your saved search limit (${features?.max_saved_searches || 0}). Upgrade your subscription to save more searches.`
+        `You have reached your saved search limit (${features?.max_saved_searches || 0}). Upgrade your subscription to save more searches.`,
       );
     }
 
@@ -536,7 +615,11 @@ async checkNewPropertiesForSavedSearches() {
     return data || [];
   }
 
-  async updateSavedSearch(userId: string, searchId: string, dto: UpdateSavedSearchDto): Promise<SavedSearch> {
+  async updateSavedSearch(
+    userId: string,
+    searchId: string,
+    dto: UpdateSavedSearchDto,
+  ): Promise<SavedSearch> {
     const { data, error } = await this.supabase
       .from('saved_searches')
       .update({
@@ -573,92 +656,115 @@ async checkNewPropertiesForSavedSearches() {
     }
   }
 
-  async registerDeviceToken(userIdFromDto: string, dto: RegisterDeviceTokenDto): Promise<void> {
+async registerDeviceToken(
+    userIdFromJwt: string,
+    dto: RegisterDeviceTokenDto,
+    jwt: string,
+  ): Promise<void> {
     this.logger.log(
-      `Registering device token for DTO_userId: ${userIdFromDto}, token: ${dto.token}, platform: ${dto.platform}`,
+      `Registering device token for JWT_userId: ${userIdFromJwt}, token: ${dto.token}`,
     );
 
-    let currentAuthUid: string | null = null;
+    const serviceRoleKey = this.configService.get<string>(
+      "SUPABASE_SERVICE_ROLE_KEY",
+    );
+    if (!serviceRoleKey) {
+      this.logger.error("SUPABASE_SERVICE_ROLE_KEY is not configured.");
+      throw new InternalServerErrorException("Server configuration error.");
+    }
+
     try {
-      const { data: authCheck, error: rpcError } = await this.supabase.rpc(
-        'get_current_auth_uid',
-      );
-      if (rpcError) {
-        this.logger.warn(`RPC get_current_auth_uid error: ${rpcError.message}`);
-      } else {
-        currentAuthUid = authCheck;
-        this.logger.log(`Current Supabase client auth.uid() from RPC: ${currentAuthUid}`);
+      // Temporarily set the auth context for this specific operation to the user's JWT.
+      // This makes the Supabase client act on behalf of the user.
+      await this.supabase.auth.setSession({ access_token: jwt, refresh_token: '' });
+      this.logger.log(`Temporarily set auth context for user ${userIdFromJwt}`);
+
+      // This logic now executes as the authenticated user, allowing RLS policies
+      // like `auth.uid() = user_id` to pass.
+      const { data: userProfile, error: profileError } = await this.supabase
+        .from("profiles")
+        .select("id, role")
+        .eq("id", userIdFromJwt)
+        .single();
+
+      if (profileError || !userProfile) {
+        this.logger.error(
+          `Profile fetch error for JWT_userId ${userIdFromJwt}: ${
+            profileError?.message || "Profile not found"
+          }`,
+        );
+        throw new InternalServerErrorException(
+          "Failed to verify user profile for device token registration.",
+        );
       }
-    } catch (e: any) {
-      this.logger.error(`Exception calling RPC get_current_auth_uid: ${e.message}`);
-    }
 
-    const { data: userProfile, error: profileError } = await this.supabase
-      .from('profiles')
-      .select('id, role') // Select 'id' to ensure we use the confirmed ID
-      .eq('id', userIdFromDto)
-      .single();
+      this.logger.log(
+        `User profile fetched: ID=${userProfile.id}, Role=${userProfile.role}.`,
+      );
 
-    if (profileError || !userProfile) {
+      if (!["user", "agent"].includes(userProfile.role)) {
+        this.logger.error(
+          `Invalid role '${userProfile.role}' for user ${userProfile.id} during device token registration.`,
+        );
+        throw new InternalServerErrorException(
+          "Invalid user role for device token registration.",
+        );
+      }
+
+      const upsertPayload = {
+        user_id: userProfile.id, // Use the confirmed ID from profiles table
+        token: dto.token,
+        platform: dto.platform,
+        updated_at: new Date().toISOString(),
+      };
+      this.logger.log(
+        `Upserting to device_tokens with payload: ${JSON.stringify(
+          upsertPayload,
+        )}`,
+      );
+
+      const { error: upsertError } = await this.supabase
+        .from("device_tokens")
+        .upsert(upsertPayload, {
+          onConflict: "token", // Assumes 'token' column has a UNIQUE constraint
+          ignoreDuplicates: false,
+        });
+
+      if (upsertError) {
+        this.logger.error(
+          `Error registering device token for user ${userProfile.id}: ${upsertError.message}`,
+          upsertError.stack,
+        );
+        this.logger.error(
+          `Upsert error details: code=${upsertError.code}, details=${upsertError.details}, hint=${upsertError.hint}`,
+        );
+        throw new InternalServerErrorException(
+          `Failed to register device token: ${upsertError.message}`,
+        );
+      }
+
+      this.logger.log(
+        `Device token successfully registered for user ${userProfile.id}`,
+      );
+    } catch (error) {
+      // Log the caught error and re-throw it to be handled by NestJS's exception filters
       this.logger.error(
-        `Profile fetch error for DTO_userId ${userIdFromDto}: ${profileError?.message || 'Profile not found'}`,
+        `An error occurred in registerDeviceToken: ${error.message}`,
+        error.stack,
       );
-      throw new InternalServerErrorException(
-        'Failed to verify user profile for device token registration.',
-      );
+      throw error;
+    } finally {
+
+      await this.supabase.auth.setSession({ access_token: serviceRoleKey, refresh_token: '' });
+      this.logger.log("Auth context has been reset to service_role.");
     }
-
-    this.logger.log(
-      `User profile fetched: ID=${userProfile.id}, Role=${userProfile.role}. DTO_userId was ${userIdFromDto}. Match: ${userProfile.id === userIdFromDto}`,
-    );
-
-    if (!['user', 'agent'].includes(userProfile.role)) {
-      this.logger.error(
-        `Invalid role '${userProfile.role}' for user ${userProfile.id} during device token registration.`,
-      );
-      throw new InternalServerErrorException('Invalid user role for device token registration.');
-    }
-
-    // IMPORTANT: Use the userProfile.id obtained from the database for the upsert
-    const actualUserIdForDb = userProfile.id;
-
-    this.logger.log(
-      `User ${userIdFromDto} (Profile ID: ${actualUserIdForDb}) verified with role '${userProfile.role}'. Current auth UID: ${currentAuthUid}. Proceeding with registration.`,
-    );
-
-    const upsertPayload = {
-      user_id: actualUserIdForDb, // Use the confirmed ID from profiles table
-      token: dto.token,
-      platform: dto.platform,
-      updated_at: new Date().toISOString(),
-    };
-    this.logger.log(`Upserting to device_tokens with payload: ${JSON.stringify(upsertPayload)}`);
-
-    const { error: upsertError } = await this.supabase
-      .from('device_tokens')
-      .upsert(upsertPayload, {
-        onConflict: 'token', // Assumes 'token' column has a UNIQUE constraint
-        ignoreDuplicates: false,
-      });
-
-    if (upsertError) {
-      this.logger.error(
-        `Error registering device token for user ${actualUserIdForDb}: ${upsertError.message}`,
-        upsertError.stack,
-      );
-      this.logger.error(
-        `Upsert error details: code=${upsertError.code}, details=${upsertError.details}, hint=${upsertError.hint}`,
-      );
-      throw new InternalServerErrorException(
-        `Failed to register device token: ${upsertError.message}`,
-      );
-    }
-
-    this.logger.log(`Device token successfully registered for user ${actualUserIdForDb}`);
   }
 
   private propertyMatchesCriteria(property: any, criteria: any): boolean {
-    if (criteria.property_type && property.property_type !== criteria.property_type) {
+    if (
+      criteria.property_type &&
+      property.property_type !== criteria.property_type
+    ) {
       return false;
     }
 
@@ -666,7 +772,10 @@ async checkNewPropertiesForSavedSearches() {
       return false;
     }
 
-    if (criteria.location && !property.location.toLowerCase().includes(criteria.location.toLowerCase())) {
+    if (
+      criteria.location &&
+      !property.location.toLowerCase().includes(criteria.location.toLowerCase())
+    ) {
       return false;
     }
 
@@ -677,18 +786,30 @@ async checkNewPropertiesForSavedSearches() {
       return false;
     }
 
-    if (criteria.bedrooms && property.effective_bedrooms !== criteria.bedrooms) {
+    if (
+      criteria.bedrooms &&
+      property.effective_bedrooms !== criteria.bedrooms
+    ) {
       return false;
     }
 
-    if (criteria.bathrooms && property.effective_bathrooms !== criteria.bathrooms) {
+    if (
+      criteria.bathrooms &&
+      property.effective_bathrooms !== criteria.bathrooms
+    ) {
       return false;
     }
 
-    if (criteria.min_square_meters && property.effective_square_meters < criteria.min_square_meters) {
+    if (
+      criteria.min_square_meters &&
+      property.effective_square_meters < criteria.min_square_meters
+    ) {
       return false;
     }
-    if (criteria.max_square_meters && property.effective_square_meters > criteria.max_square_meters) {
+    if (
+      criteria.max_square_meters &&
+      property.effective_square_meters > criteria.max_square_meters
+    ) {
       return false;
     }
 
@@ -711,17 +832,19 @@ async checkNewPropertiesForSavedSearches() {
         },
       });
 
-      await this.supabase
-        .from('search_notifications')
-        .insert({
-          saved_search_id: savedSearch.id,
-          property_id: property.id,
-          user_id: savedSearch.user_id,
-        });
+      await this.supabase.from('search_notifications').insert({
+        saved_search_id: savedSearch.id,
+        property_id: property.id,
+        user_id: savedSearch.user_id,
+      });
 
-      this.logger.log(`Notified user ${savedSearch.user_id} about property match for search "${savedSearch.name}"`);
+      this.logger.log(
+        `Notified user ${savedSearch.user_id} about property match for search "${savedSearch.name}"`,
+      );
     } catch (error) {
-      this.logger.error(`Failed to notify user about property match: ${error.message}`);
+      this.logger.error(
+        `Failed to notify user about property match: ${error.message}`,
+      );
     }
   }
 
@@ -762,7 +885,9 @@ async checkNewPropertiesForSavedSearches() {
       for (const chunk of chunks) {
         try {
           const ticketChunk = await this.expo.sendPushNotificationsAsync(chunk);
-          this.logger.log(`Sent push notification chunk: ${JSON.stringify(ticketChunk)}`);
+          this.logger.log(
+            `Sent push notification chunk: ${JSON.stringify(ticketChunk)}`,
+          );
         } catch (error) {
           this.logger.error(`Error sending push notification chunk:`, error);
         }

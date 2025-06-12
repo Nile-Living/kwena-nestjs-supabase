@@ -5,9 +5,10 @@ import { NotificationsService } from './notifications.service';
 import { SupabaseModule } from '../supabase/supabase.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { SubscriptionsModule } from 'src/subscriptions/subscriptions.module';
+import { ConfigModule } from '@nestjs/config';
 
 @Module({
-  imports: [SupabaseModule, ScheduleModule.forRoot(), SubscriptionsModule,],
+  imports: [SupabaseModule, ScheduleModule.forRoot(), SubscriptionsModule, ConfigModule],
   controllers: [NotificationsController],
   providers: [NotificationsService],
   exports: [NotificationsService],

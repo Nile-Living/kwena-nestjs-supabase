@@ -1,4 +1,3 @@
-// src/properties/dto/query-property.dto.ts
 import { Transform, Type } from "class-transformer";
 import {
   IsOptional,
@@ -10,6 +9,7 @@ import {
   IsIn,
   IsBoolean,
   IsUUID,
+  IsArray,
 } from "class-validator";
 
 const allowedSortFields = [
@@ -50,7 +50,7 @@ const allowedCommercialSubTypes = [
 export class QueryPropertyDto {
   @IsOptional()
   @IsUUID("4", { message: "Session ID must be a valid UUID if provided." })
-  sessionId?: string; // For per-user/session ad cycle caching
+  sessionId?: string;
 
   @IsOptional()
   @IsInt({ message: "Page must be an integer." })
@@ -204,4 +204,14 @@ export class QueryPropertyDto {
     )}`,
   })
   commercial_property_type?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @Transform(({ value }) => Array.isArray(value) ? value : [value])
+  amenities?: string[];
+
+  @IsOptional()
+  @IsString()
+  features?: string;
 }
