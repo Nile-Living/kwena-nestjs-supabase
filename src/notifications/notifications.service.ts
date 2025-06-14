@@ -68,7 +68,7 @@ export class NotificationsService {
   constructor(
     @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient,
     private readonly subscriptionsService: SubscriptionsService,
-    private readonly configService: ConfigService
+    private readonly configService: ConfigService,
   ) {}
 
   @Cron(CronExpression.EVERY_HOUR)
@@ -120,7 +120,9 @@ export class NotificationsService {
 
         if (!promotion.properties || typeof promotion.properties !== 'object') {
           this.logger.error(
-            `No properties data found for promotion ${promotion.id}. Properties: ${JSON.stringify(promotion.properties)}`,
+            `No properties data found for promotion ${promotion.id}. Properties: ${JSON.stringify(
+              promotion.properties,
+            )}`,
           );
           continue;
         }
@@ -129,7 +131,9 @@ export class NotificationsService {
 
         if (!property.title || !property.user_id) {
           this.logger.error(
-            `Invalid property data for promotion ${promotion.id}. Property: ${JSON.stringify(property)}`,
+            `Invalid property data for promotion ${
+              promotion.id
+            }. Property: ${JSON.stringify(property)}`,
           );
           continue;
         }
@@ -168,11 +172,18 @@ export class NotificationsService {
           .from('profiles')
           .select('id, role, full_name')
           .eq('id', property.user_id)
-          .single();
+          .maybeSingle();
 
         if (profileError) {
           this.logger.error(
-            `Error fetching user profile for promotion ${promotion.id}: ${profileError.message}`,
+            `Database error fetching user profile for promotion ${promotion.id}: ${profileError.message}`,
+          );
+          continue;
+        }
+
+        if (!userProfile) {
+          this.logger.warn(
+            `Skipping promotion ${promotion.id}: User profile with ID ${property.user_id} not found.`,
           );
           continue;
         }
@@ -206,7 +217,9 @@ export class NotificationsService {
             });
 
             this.logger.log(
-              `Notification created successfully for agent ${userProfile.full_name || 'Unknown'} for property: ${property.title}`,
+              `Notification created successfully for agent ${
+                userProfile.full_name || 'Unknown'
+              } for property: ${property.title}`,
             );
           } catch (notificationError) {
             this.logger.error(
@@ -216,7 +229,9 @@ export class NotificationsService {
           }
         } else {
           this.logger.log(
-            `Skipping notification for property ${property.title} - owner is not an agent (role: ${userProfile?.role || 'unknown'})`,
+            `Skipping notification for property ${property.title} - owner is not an agent (role: ${
+              userProfile?.role || 'unknown'
+            })`,
           );
         }
       }
@@ -225,8 +240,6 @@ export class NotificationsService {
       this.logger.error('Full error details:', error);
     }
   }
-
-  // In notifications.service.ts, update the checkNewPropertiesForSavedSearches method:
 
   @Cron(CronExpression.EVERY_10_MINUTES)
   async checkNewPropertiesForSavedSearches() {
@@ -257,7 +270,6 @@ export class NotificationsService {
 
       this.logger.log(`Found ${newProperties.length} new properties`);
 
-      // First, get active saved searches
       const { data: savedSearches, error: searchesError } = await this.supabase
         .from('saved_searches')
         .select('*')
@@ -276,7 +288,6 @@ export class NotificationsService {
         return;
       }
 
-      // Get user profiles for the saved searches
       const userIds = [
         ...new Set(savedSearches.map((search) => search.user_id)),
       ];
@@ -293,7 +304,6 @@ export class NotificationsService {
         return;
       }
 
-      // Get active subscriptions for these users
       const { data: userSubscriptions, error: subscriptionsError } =
         await this.supabase
           .from('user_subscriptions')
@@ -309,13 +319,11 @@ export class NotificationsService {
         return;
       }
 
-      // Create lookup maps
       const profilesMap = new Map(userProfiles?.map((p) => [p.id, p]) || []);
       const subscriptionsMap = new Map(
         userSubscriptions?.map((s) => [s.user_id, s]) || [],
       );
 
-      // Filter saved searches to only include those from subscribed regular users
       const eligibleSavedSearches = savedSearches.filter((search) => {
         const profile = profilesMap.get(search.user_id);
         const subscription = subscriptionsMap.get(search.user_id);
@@ -357,7 +365,7 @@ export class NotificationsService {
       .from('profiles')
       .select('role')
       .eq('id', dto.user_id)
-      .single();
+      .maybeSingle();
 
     if (profileError) {
       this.logger.error(
@@ -366,7 +374,7 @@ export class NotificationsService {
       throw new InternalServerErrorException('Failed to verify user profile');
     }
 
-    if (userProfile.role !== 'agent') {
+    if (!userProfile || userProfile.role !== 'agent') {
       this.logger.warn(
         `Attempted to create notification for non-agent user: ${dto.user_id}`,
       );
@@ -408,14 +416,14 @@ export class NotificationsService {
       .from('profiles')
       .select('role')
       .eq('id', dto.user_id)
-      .single();
+      .maybeSingle();
 
     if (profileError) {
       this.logger.error(`Error fetching user profile: ${profileError.message}`);
       throw new InternalServerErrorException('Failed to verify user profile');
     }
 
-    if (userProfile.role !== 'user') {
+    if (!userProfile || userProfile.role !== 'user') {
       this.logger.warn(
         `Attempted to create user notification for non-user: ${dto.user_id}`,
       );
@@ -450,14 +458,14 @@ export class NotificationsService {
       .from('profiles')
       .select('role')
       .eq('id', userId)
-      .single();
+      .maybeSingle();
 
     if (profileError) {
       this.logger.error(`Error fetching user profile: ${profileError.message}`);
       throw new InternalServerErrorException('Failed to verify user profile');
     }
 
-    if (!['user', 'agent'].includes(userProfile.role)) {
+    if (!userProfile || !['user', 'agent'].includes(userProfile.role)) {
       throw new InternalServerErrorException(
         'Invalid user role for notifications',
       );
@@ -508,9 +516,13 @@ export class NotificationsService {
       .from('profiles')
       .select('role')
       .eq('id', userId)
-      .single();
+      .maybeSingle();
 
-    if (profileError || !['user', 'agent'].includes(userProfile.role)) {
+    if (
+      profileError ||
+      !userProfile ||
+      !['user', 'agent'].includes(userProfile.role)
+    ) {
       throw new InternalServerErrorException(
         'Unauthorized access to notifications',
       );
@@ -535,9 +547,13 @@ export class NotificationsService {
       .from('profiles')
       .select('role')
       .eq('id', userId)
-      .single();
+      .maybeSingle();
 
-    if (profileError || !['user', 'agent'].includes(userProfile.role)) {
+    if (
+      profileError ||
+      !userProfile ||
+      !['user', 'agent'].includes(userProfile.role)
+    ) {
       throw new InternalServerErrorException(
         'Unauthorized access to notifications',
       );
@@ -577,7 +593,9 @@ export class NotificationsService {
       const features =
         await this.subscriptionsService.getUserSubscriptionFeatures(userId);
       throw new BadRequestException(
-        `You have reached your saved search limit (${features?.max_saved_searches || 0}). Upgrade your subscription to save more searches.`,
+        `You have reached your saved search limit (${
+          features?.max_saved_searches || 0
+        }). Upgrade your subscription to save more searches.`,
       );
     }
 
@@ -656,7 +674,7 @@ export class NotificationsService {
     }
   }
 
-async registerDeviceToken(
+  async registerDeviceToken(
     userIdFromJwt: string,
     dto: RegisterDeviceTokenDto,
     jwt: string,
@@ -666,35 +684,41 @@ async registerDeviceToken(
     );
 
     const serviceRoleKey = this.configService.get<string>(
-      "SUPABASE_SERVICE_ROLE_KEY",
+      'SUPABASE_SERVICE_ROLE_KEY',
     );
     if (!serviceRoleKey) {
-      this.logger.error("SUPABASE_SERVICE_ROLE_KEY is not configured.");
-      throw new InternalServerErrorException("Server configuration error.");
+      this.logger.error('SUPABASE_SERVICE_ROLE_KEY is not configured.');
+      throw new InternalServerErrorException('Server configuration error.');
     }
 
     try {
-      // Temporarily set the auth context for this specific operation to the user's JWT.
-      // This makes the Supabase client act on behalf of the user.
-      await this.supabase.auth.setSession({ access_token: jwt, refresh_token: '' });
+      await this.supabase.auth.setSession({
+        access_token: jwt,
+        refresh_token: '',
+      });
       this.logger.log(`Temporarily set auth context for user ${userIdFromJwt}`);
 
-      // This logic now executes as the authenticated user, allowing RLS policies
-      // like `auth.uid() = user_id` to pass.
       const { data: userProfile, error: profileError } = await this.supabase
-        .from("profiles")
-        .select("id, role")
-        .eq("id", userIdFromJwt)
-        .single();
+        .from('profiles')
+        .select('id, role')
+        .eq('id', userIdFromJwt)
+        .maybeSingle();
 
-      if (profileError || !userProfile) {
+      if (profileError) {
         this.logger.error(
-          `Profile fetch error for JWT_userId ${userIdFromJwt}: ${
-            profileError?.message || "Profile not found"
-          }`,
+          `Profile fetch error for JWT_userId ${userIdFromJwt}: ${profileError?.message}`,
         );
         throw new InternalServerErrorException(
-          "Failed to verify user profile for device token registration.",
+          'Failed to verify user profile for device token registration.',
+        );
+      }
+
+      if (!userProfile) {
+        this.logger.error(
+          `Profile not found for JWT_userId ${userIdFromJwt}.`,
+        );
+        throw new InternalServerErrorException(
+          'User profile not found for device token registration.',
         );
       }
 
@@ -702,17 +726,17 @@ async registerDeviceToken(
         `User profile fetched: ID=${userProfile.id}, Role=${userProfile.role}.`,
       );
 
-      if (!["user", "agent"].includes(userProfile.role)) {
+      if (!['user', 'agent'].includes(userProfile.role)) {
         this.logger.error(
           `Invalid role '${userProfile.role}' for user ${userProfile.id} during device token registration.`,
         );
         throw new InternalServerErrorException(
-          "Invalid user role for device token registration.",
+          'Invalid user role for device token registration.',
         );
       }
 
       const upsertPayload = {
-        user_id: userProfile.id, // Use the confirmed ID from profiles table
+        user_id: userProfile.id,
         token: dto.token,
         platform: dto.platform,
         updated_at: new Date().toISOString(),
@@ -724,9 +748,9 @@ async registerDeviceToken(
       );
 
       const { error: upsertError } = await this.supabase
-        .from("device_tokens")
+        .from('device_tokens')
         .upsert(upsertPayload, {
-          onConflict: "token", // Assumes 'token' column has a UNIQUE constraint
+          onConflict: 'token',
           ignoreDuplicates: false,
         });
 
@@ -747,16 +771,17 @@ async registerDeviceToken(
         `Device token successfully registered for user ${userProfile.id}`,
       );
     } catch (error) {
-      // Log the caught error and re-throw it to be handled by NestJS's exception filters
       this.logger.error(
         `An error occurred in registerDeviceToken: ${error.message}`,
         error.stack,
       );
       throw error;
     } finally {
-
-      await this.supabase.auth.setSession({ access_token: serviceRoleKey, refresh_token: '' });
-      this.logger.log("Auth context has been reset to service_role.");
+      await this.supabase.auth.setSession({
+        access_token: serviceRoleKey,
+        refresh_token: '',
+      });
+      this.logger.log('Auth context has been reset to service_role.');
     }
   }
 
