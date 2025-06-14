@@ -90,11 +90,10 @@ async function bootstrap() {
 
   app.setGlobalPrefix('api');
 
-  const configService = app.get(ConfigService);
-  const port = configService.get<number>('PORT') || 8080;
-  const bootstrapLogger = new Logger('Bootstrap');
+const bootstrapLogger = new Logger('Bootstrap');
+const port = 3000; // We are forcing the port to 3000
 
-  await app.listen(port, '0.0.0.0');
-  bootstrapLogger.log(`Application listening on port ${port}`);
+await app.listen(port, '0.0.0.0');
+bootstrapLogger.log(`Application listening on port ${port}`);
 }
 bootstrap();
