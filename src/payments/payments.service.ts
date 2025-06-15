@@ -3,8 +3,11 @@ import {
   Logger,
   InternalServerErrorException,
   BadRequestException,
+  Inject,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { SupabaseClient } from '@supabase/supabase-js';
+import { SUPABASE_CLIENT } from '../supabase/supabase.constants';
 import { LencoService } from '../lenco/lenco.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { InitiatePaymentDto, PaymentMethod } from './dto/initiate-payment.dto';
@@ -21,6 +24,7 @@ export class PaymentsService {
     private readonly configService: ConfigService,
     private readonly lencoService: LencoService,
     private readonly subscriptionsService: SubscriptionsService,
+    @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient,
   ) {
     this.currentProvider = this.configService.get<PaymentProvider>(
       'PAYMENT_PROVIDER',
@@ -155,16 +159,26 @@ export class PaymentsService {
       );
 
       if (result.status === 'successful') {
-        const existingSubscription =
-          await this.subscriptionsService.getUserActiveSubscription(userId);
-        if (
-          !existingSubscription ||
-          !this.wasCreatedFromPayment(existingSubscription, reference)
-        ) {
-          await this.createSubscriptionAfterPayment(
-            userId,
-            reference,
-            parseFloat(result.amount),
+        try {
+          const existingSubscriptions = await this.subscriptionsService.getUserSubscriptions(userId);
+          const existingWithPaymentRef = existingSubscriptions.find(
+            (sub) => sub.payment_reference === reference,
+          );
+
+          if (!existingWithPaymentRef || existingWithPaymentRef.status !== 'active') {
+            await this.createSubscriptionAfterPayment(
+              userId,
+              reference,
+              parseFloat(result.amount),
+            );
+            this.logger.log(`New subscription created for user ${userId} from payment ${reference}`);
+          } else {
+            this.logger.log(`Subscription already exists for payment ${reference}`);
+          }
+        } catch (subscriptionError: any) {
+          this.logger.error(
+            `Error handling subscription for successful payment ${reference}:`,
+            subscriptionError,
           );
         }
       }

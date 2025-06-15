@@ -258,9 +258,7 @@ export class SubscriptionsService {
     }
 
     if (!data) {
-      throw new NotFoundException(
-        'No active subscription found for this user.',
-      );
+      return null;
     }
 
     return {
