@@ -147,7 +147,7 @@ export class NotificationsService {
             .from('notifications')
             .select('id')
             .eq('type', 'promotion_expiring')
-            .contains('data', { promotion_id: promotion.id })
+            .eq('data->>promotion_id', promotion.id)
             .maybeSingle();
 
         if (notificationCheckError) {
