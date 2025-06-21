@@ -6,6 +6,7 @@ import {
   NotFoundException,
   InternalServerErrorException,
   BadRequestException,
+  ConflictException,
 } from '@nestjs/common';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../supabase/supabase.constants';
@@ -158,62 +159,223 @@ export class SubscriptionsService {
     return plan;
   }
 
-  async createSubscription(
-    userId: string,
-    dto: CreateSubscriptionDto,
-  ): Promise<UserSubscription> {
-    // Verify user exists and is a regular user
-    const { data: userProfile, error: profileError } = await this.supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', userId)
-      .single();
+async createSubscription(
+  userId: string,
+  dto: CreateSubscriptionDto,
+): Promise<UserSubscription> {
+  this.logger.log(
+    `Creating subscription for user ${userId} with payment reference ${dto.payment_reference}`,
+  );
 
-    if (profileError || !userProfile) {
-      throw new InternalServerErrorException('Failed to verify user profile');
+  // Verify user exists and is a regular user
+  const { data: userProfile, error: profileError } = await this.supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', userId)
+    .single();
+
+  if (profileError || !userProfile) {
+    this.logger.error(
+      `Failed to verify user profile for ${userId}: ${profileError?.message}`,
+    );
+    throw new InternalServerErrorException('Failed to verify user profile');
+  }
+
+  if (userProfile.role !== 'user') {
+    throw new BadRequestException(
+      'Subscriptions are only available for regular users',
+    );
+  }
+
+  // Validate subscription plan exists
+  const plan = await this.getSubscriptionPlan(dto.subscription_type);
+  if (!plan) {
+    throw new BadRequestException(
+      `Invalid subscription type: ${dto.subscription_type}`,
+    );
+  }
+
+  // Check if subscription with this payment reference already exists
+  if (dto.payment_reference) {
+    const existingByPaymentRef = await this.getSubscriptionByPaymentReference(
+      dto.payment_reference,
+    );
+
+    if (existingByPaymentRef) {
+      if (
+        existingByPaymentRef.user_id === userId &&
+        existingByPaymentRef.status === 'active'
+      ) {
+        this.logger.log(
+          `Subscription already exists for payment reference ${dto.payment_reference}, returning existing subscription`,
+        );
+        return existingByPaymentRef;
+      } else if (existingByPaymentRef.user_id !== userId) {
+        this.logger.error(
+          `Payment reference ${dto.payment_reference} is associated with different user`,
+        );
+        throw new BadRequestException(
+          'Payment reference is associated with a different user',
+        );
+      } else if (existingByPaymentRef.status !== 'active') {
+        this.logger.log(
+          `Found existing subscription with payment reference ${dto.payment_reference} but status is ${existingByPaymentRef.status}. Will update it.`,
+        );
+        
+        // Update the existing subscription to active
+        const startsAt = new Date();
+        const expiresAt = new Date();
+        expiresAt.setMonth(expiresAt.getMonth() + dto.duration_months);
+
+        const { data: updatedSubscription, error: updateError } = await this.supabase
+          .from('user_subscriptions')
+          .update({
+            status: 'active',
+            starts_at: startsAt.toISOString(),
+            expires_at: expiresAt.toISOString(),
+            amount_paid: dto.amount_paid,
+            currency: dto.currency || 'ZMW',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', existingByPaymentRef.id)
+          .select()
+          .single();
+
+        if (updateError) {
+          this.logger.error(
+            `Error updating existing subscription: ${updateError.message}`,
+          );
+          throw new InternalServerErrorException('Failed to update subscription');
+        }
+
+        this.logger.log(
+          `Updated existing subscription ${existingByPaymentRef.id} to active status`,
+        );
+
+        return { ...updatedSubscription, features: plan.features };
+      }
     }
+  }
 
-    if (userProfile.role !== 'user') {
+  // Check if user already has an active subscription (different payment reference)
+  const existingActiveSubscription = await this.getUserActiveSubscription(userId);
+  if (
+    existingActiveSubscription &&
+    existingActiveSubscription.payment_reference !== dto.payment_reference
+  ) {
+    this.logger.warn(
+      `User ${userId} already has an active subscription with payment reference ${existingActiveSubscription.payment_reference}, but new payment reference is ${dto.payment_reference}`,
+    );
+    
+    // If the existing subscription expires soon (within 7 days), we can extend it
+    const existingExpiresAt = new Date(existingActiveSubscription.expires_at);
+    const now = new Date();
+    const daysUntilExpiry = Math.ceil((existingExpiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+    
+    if (daysUntilExpiry <= 7) {
+      this.logger.log(
+        `Existing subscription expires in ${daysUntilExpiry} days. Extending it instead of creating new one.`,
+      );
+      
+      const newExpiresAt = new Date(existingExpiresAt);
+      newExpiresAt.setMonth(newExpiresAt.getMonth() + dto.duration_months);
+
+      const { data: extendedSubscription, error: extendError } = await this.supabase
+        .from('user_subscriptions')
+        .update({
+          expires_at: newExpiresAt.toISOString(),
+          payment_reference: dto.payment_reference, // Update to new payment reference
+          amount_paid: (existingActiveSubscription.amount_paid || 0) + (dto.amount_paid || 0),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existingActiveSubscription.id)
+        .select()
+        .single();
+
+      if (extendError) {
+        this.logger.error(`Error extending subscription: ${extendError.message}`);
+        throw new InternalServerErrorException('Failed to extend subscription');
+      }
+
+      this.logger.log(
+        `Extended existing subscription ${existingActiveSubscription.id} until ${newExpiresAt.toISOString()}`,
+      );
+
+      return { ...extendedSubscription, features: plan.features };
+    } else {
       throw new BadRequestException(
-        'Subscriptions are only available for regular users',
+        `User already has an active subscription that expires on ${existingExpiresAt.toLocaleDateString()}. Cannot create another subscription.`,
       );
     }
-
-    // Check if user already has an active subscription
-    const existingSubscription = await this.getUserActiveSubscription(userId);
-    if (existingSubscription) {
-      throw new BadRequestException('User already has an active subscription');
-    }
-
-    // Validate subscription plan exists
-    const plan = await this.getSubscriptionPlan(dto.subscription_type);
-
-    const startsAt = new Date();
-    const expiresAt = new Date();
-    expiresAt.setMonth(expiresAt.getMonth() + dto.duration_months);
-
-    const { data, error } = await this.supabase
-      .from('user_subscriptions')
-      .insert({
-        user_id: userId,
-        subscription_type: dto.subscription_type,
-        starts_at: startsAt.toISOString(),
-        expires_at: expiresAt.toISOString(),
-        payment_reference: dto.payment_reference,
-        amount_paid: dto.amount_paid,
-        currency: dto.currency || 'ZMW',
-        status: 'active',
-      })
-      .select()
-      .single();
-
-    if (error) {
-      this.logger.error(`Error creating subscription: ${error.message}`);
-      throw new InternalServerErrorException('Failed to create subscription');
-    }
-
-    return { ...data, features: plan.features };
   }
+
+  // Calculate subscription dates
+  const startsAt = new Date();
+  const expiresAt = new Date();
+  expiresAt.setMonth(expiresAt.getMonth() + dto.duration_months);
+
+  // Create new subscription
+  const subscriptionData = {
+    user_id: userId,
+    subscription_type: dto.subscription_type,
+    starts_at: startsAt.toISOString(),
+    expires_at: expiresAt.toISOString(),
+    payment_reference: dto.payment_reference,
+    amount_paid: dto.amount_paid,
+    currency: dto.currency || 'ZMW',
+    status: 'active',
+  };
+
+  this.logger.log(
+    `Inserting new subscription with data: ${JSON.stringify(subscriptionData)}`,
+  );
+
+  const { data, error } = await this.supabase
+    .from('user_subscriptions')
+    .insert(subscriptionData)
+    .select()
+    .single();
+
+  if (error) {
+    this.logger.error(`Error creating subscription: ${error.message}`);
+    
+    // Handle specific database errors
+    if (error.code === '23505') {
+      // Unique constraint violation
+      if (error.message.includes('unique_active_payment_reference')) {
+        this.logger.log(
+          `Unique constraint violation for payment reference ${dto.payment_reference}. Fetching existing subscription.`,
+        );
+        
+        // Try to fetch the existing subscription
+        const existingSubscription = await this.getSubscriptionByPaymentReference(
+          dto.payment_reference!,
+        );
+        
+        if (existingSubscription && existingSubscription.user_id === userId) {
+          return existingSubscription;
+        }
+      }
+      
+      throw new ConflictException(
+        'A subscription with this payment reference already exists',
+      );
+    }
+    
+    throw new InternalServerErrorException('Failed to create subscription');
+  }
+
+  if (!data) {
+    this.logger.error('No data returned from subscription creation');
+    throw new InternalServerErrorException('Failed to create subscription - no data returned');
+  }
+
+  this.logger.log(
+    `Successfully created subscription ${data.id} for user ${userId} with payment reference ${dto.payment_reference}`,
+  );
+
+  return { ...data, features: plan.features };
+}
 
   async getUserSubscriptions(userId: string): Promise<UserSubscription[]> {
     const { data, error } = await this.supabase
@@ -272,6 +434,99 @@ export class SubscriptionsService {
   async isUserSubscribed(userId: string): Promise<boolean> {
     const subscription = await this.getUserActiveSubscription(userId);
     return !!subscription;
+  }
+
+  async getSubscriptionByPaymentReference(
+    paymentReference: string,
+  ): Promise<UserSubscription | null> {
+    const { data, error } = await this.supabase
+      .from('user_subscriptions')
+      .select('*')
+      .eq('payment_reference', paymentReference)
+      .maybeSingle();
+
+    if (error) {
+      this.logger.error(
+        `Error fetching subscription by payment reference: ${error.message}`,
+      );
+      return null;
+    }
+
+    if (!data) {
+      return null;
+    }
+
+    return {
+      ...data,
+      features:
+        this.subscriptionPlans[data.subscription_type as SubscriptionType]
+          ?.features,
+    };
+  }
+
+  // Also add the recovery method mentioned earlier
+  async recoverSubscriptionByPaymentReference(
+    userId: string,
+    paymentReference: string,
+  ): Promise<UserSubscription | null> {
+    // First check if subscription exists
+    const existingSubscription =
+      await this.getSubscriptionByPaymentReference(paymentReference);
+
+    if (existingSubscription && existingSubscription.user_id === userId) {
+      this.logger.log(
+        `Found existing subscription for payment reference ${paymentReference}`,
+      );
+      return existingSubscription;
+    }
+
+    // If no subscription found, try to create one (recovery mechanism)
+    try {
+      this.logger.log(
+        `Attempting to recover subscription for payment ${paymentReference}`,
+      );
+
+      const startsAt = new Date();
+      const expiresAt = new Date();
+      expiresAt.setMonth(expiresAt.getMonth() + 1);
+
+      const { data, error } = await this.supabase
+        .from('user_subscriptions')
+        .insert({
+          user_id: userId,
+          subscription_type: SubscriptionType.BASIC,
+          starts_at: startsAt.toISOString(),
+          expires_at: expiresAt.toISOString(),
+          payment_reference: paymentReference,
+          amount_paid: 129,
+          currency: 'ZMW',
+          status: 'active',
+        })
+        .select()
+        .single();
+
+      if (error) {
+        this.logger.error(
+          `Failed to create recovery subscription: ${error.message}`,
+        );
+        return null;
+      }
+
+      this.logger.log(
+        `Recovery subscription created for user ${userId}, payment ${paymentReference}`,
+      );
+
+      return {
+        ...data,
+        features: this.subscriptionPlans[SubscriptionType.BASIC].features,
+      };
+    } catch (error: any) {
+      this.logger.error(
+        `Failed to recover subscription for payment ${paymentReference}:`,
+        error,
+      );
+      return null;
+    }
   }
 
   async getUserSubscriptionFeatures(

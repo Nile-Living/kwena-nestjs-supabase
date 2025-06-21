@@ -88,9 +88,7 @@ export class PaymentsService {
     }
 
     try {
-      this.logger.log(
-        `Submitting OTP for Lenco payment: ref ${dto.reference}`,
-      );
+      this.logger.log(`Submitting OTP for Lenco payment: ref ${dto.reference}`);
       await this.lencoService.submitOtp(dto.reference, dto.otp);
 
       this.logger.log(
@@ -146,6 +144,7 @@ export class PaymentsService {
         `Payment verification not supported with ${this.currentProvider} provider. Lenco is required.`,
       );
     }
+
     try {
       const result = await this.lencoService.verifyPayment(reference);
       if (!result) {
@@ -159,28 +158,12 @@ export class PaymentsService {
       );
 
       if (result.status === 'successful') {
-        try {
-          const existingSubscriptions = await this.subscriptionsService.getUserSubscriptions(userId);
-          const existingWithPaymentRef = existingSubscriptions.find(
-            (sub) => sub.payment_reference === reference,
-          );
-
-          if (!existingWithPaymentRef || existingWithPaymentRef.status !== 'active') {
-            await this.createSubscriptionAfterPayment(
-              userId,
-              reference,
-              parseFloat(result.amount),
-            );
-            this.logger.log(`New subscription created for user ${userId} from payment ${reference}`);
-          } else {
-            this.logger.log(`Subscription already exists for payment ${reference}`);
-          }
-        } catch (subscriptionError: any) {
-          this.logger.error(
-            `Error handling subscription for successful payment ${reference}:`,
-            subscriptionError,
-          );
-        }
+        // Use a more robust subscription creation/update approach
+        await this.ensureSubscriptionExists(
+          userId,
+          reference,
+          parseFloat(result.amount),
+        );
       }
 
       return {
@@ -205,6 +188,62 @@ export class PaymentsService {
     }
   }
 
+  private async ensureSubscriptionExists(
+    userId: string,
+    paymentReference: string,
+    amount?: number,
+  ): Promise<void> {
+    try {
+      // Check if subscription already exists with this payment reference
+      const existingSubscription =
+        await this.subscriptionsService.getSubscriptionByPaymentReference(
+          paymentReference,
+        );
+
+      if (existingSubscription && existingSubscription.status === 'active') {
+        this.logger.log(
+          `Subscription already exists for payment reference ${paymentReference}`,
+        );
+        return;
+      }
+
+      // Check if user has any other active subscription
+      const activeSubscription =
+        await this.subscriptionsService.getUserActiveSubscription(userId);
+
+      if (
+        activeSubscription &&
+        activeSubscription.payment_reference !== paymentReference
+      ) {
+        this.logger.log(
+          `User ${userId} already has an active subscription with different payment reference. Skipping creation.`,
+        );
+        return;
+      }
+
+      // Create new subscription
+      const subscription = await this.subscriptionsService.createSubscription(
+        userId,
+        {
+          subscription_type: SubscriptionType.BASIC,
+          duration_months: 1,
+          payment_reference: paymentReference,
+          amount_paid: amount || 129,
+          currency: 'ZMW',
+        },
+      );
+
+      this.logger.log(
+        `Subscription created for user ${userId}, payment reference: ${paymentReference}, subscription ID: ${subscription.id}`,
+      );
+    } catch (error: any) {
+      this.logger.error(
+        `Failed to ensure subscription exists for user ${userId}, ref ${paymentReference}:`,
+        error,
+      );
+    }
+  }
+
   getCurrentProvider(): PaymentProvider {
     return this.currentProvider;
   }
@@ -221,21 +260,26 @@ export class PaymentsService {
         (sub) => sub.payment_reference === paymentReference,
       );
 
-      if (existingWithPaymentRef && existingWithPaymentRef.status === 'active') {
+      if (
+        existingWithPaymentRef &&
+        existingWithPaymentRef.status === 'active'
+      ) {
         this.logger.log(
           `Subscription already active for payment reference ${paymentReference}`,
         );
         return existingWithPaymentRef;
       }
 
-      const subscription =
-        await this.subscriptionsService.createSubscription(userId, {
+      const subscription = await this.subscriptionsService.createSubscription(
+        userId,
+        {
           subscription_type: SubscriptionType.BASIC,
           duration_months: 1,
           payment_reference: paymentReference,
           amount_paid: amount || 1,
           currency: 'ZMW',
-        });
+        },
+      );
 
       this.logger.log(
         `Subscription created/updated for user ${userId}, payment reference: ${paymentReference}, provider: ${this.currentProvider}`,
