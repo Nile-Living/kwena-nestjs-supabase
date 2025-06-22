@@ -9,7 +9,7 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { SupabaseClient } from '@supabase/supabase-js';
-import { SUPABASE_CLIENT } from '../supabase/supabase.constants';
+import { SUPABASE_SERVICE_ADMIN } from '../supabase/supabase.constants';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import {
   CreateSubscriptionDto,
@@ -102,7 +102,7 @@ export class SubscriptionsService {
   };
 
   constructor(
-    @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient,
+    @Inject(SUPABASE_SERVICE_ADMIN) private readonly supabase: SupabaseClient,
   ) {}
 
   // Check and update expired subscriptions

@@ -7,7 +7,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { SupabaseClient } from '@supabase/supabase-js';
-import { SUPABASE_CLIENT } from '../supabase/supabase.constants';
+import { SUPABASE_ANON_CLIENT } from '../supabase/supabase.constants';
 import { CreatePropertyDto } from './dto/create-property.dto';
 import { QueryPropertyDto } from './dto/query-property.dto';
 import { PropertyResponseDto, Property } from './dto/property.response.dto';
@@ -26,7 +26,7 @@ export class PropertiesService {
   private readonly baseTableName = 'properties';
 
   constructor(
-    @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient,
+    @Inject(SUPABASE_ANON_CLIENT) private readonly supabase: SupabaseClient,
     private readonly cloudinaryService: CloudinaryService,
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
     private readonly profilesService: ProfilesService

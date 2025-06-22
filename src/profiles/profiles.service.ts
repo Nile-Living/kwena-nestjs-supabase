@@ -7,7 +7,7 @@ import {
   Logger,
 } from "@nestjs/common";
 import { SupabaseClient } from "@supabase/supabase-js";
-import { SUPABASE_CLIENT } from "../supabase/supabase.constants";
+import { SUPABASE_ANON_CLIENT } from "../supabase/supabase.constants";
 import { UpdateProfileDto } from "./profiles.controller";
 
 @Injectable()
@@ -15,7 +15,7 @@ export class ProfilesService {
   private readonly logger = new Logger(ProfilesService.name);
 
   constructor(
-    @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient,
+    @Inject(SUPABASE_ANON_CLIENT) private readonly supabase: SupabaseClient,
   ) {}
 
   // ADD THIS NEW METHOD

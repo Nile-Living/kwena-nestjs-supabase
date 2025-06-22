@@ -10,7 +10,7 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { SupabaseClient } from '@supabase/supabase-js';
-import { SUPABASE_CLIENT } from '../supabase/supabase.constants';
+import { SUPABASE_ANON_CLIENT } from '../supabase/supabase.constants';
 import { LencoService } from '../lenco/lenco.service';
 import {
   InitiatePromotionDto,
@@ -37,7 +37,7 @@ export class PromotionsService {
   private readonly currentProvider: PaymentProvider;
 
   constructor(
-    @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient,
+    @Inject(SUPABASE_ANON_CLIENT) private readonly supabase: SupabaseClient,
     private readonly lencoService: LencoService,
     private readonly configService: ConfigService,
   ) {

@@ -10,14 +10,14 @@ import {
 import { ConfigService } from "@nestjs/config";
 import { SupabaseClient, User, Session } from "@supabase/supabase-js";
 import { SignUpDto } from "./dto/auth.dto";
-import { SUPABASE_CLIENT } from "../supabase/supabase.constants"; // Ensure this path is correct
+import { SUPABASE_ANON_CLIENT } from "../supabase/supabase.constants"; // Ensure this path is correct
 
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
 
   constructor(
-    @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient,
+    @Inject(SUPABASE_ANON_CLIENT) private readonly supabase: SupabaseClient,
     private readonly configService: ConfigService,
   ) {}
 

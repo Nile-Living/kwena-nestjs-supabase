@@ -8,7 +8,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { SupabaseClient } from '@supabase/supabase-js';
-import { SUPABASE_CLIENT } from '../supabase/supabase.constants';
+import { SUPABASE_ANON_CLIENT } from '../supabase/supabase.constants';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { CreateNotificationDto } from './dto/create-notification.dto';
 import { CreateSavedSearchDto } from './dto/create-saved-search.dto';
@@ -67,7 +67,7 @@ export class NotificationsService {
   private expo = new Expo();
 
   constructor(
-    @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient,
+    @Inject(SUPABASE_ANON_CLIENT) private readonly supabase: SupabaseClient,
     private readonly subscriptionsService: SubscriptionsService,
     private readonly configService: ConfigService,
   ) {}

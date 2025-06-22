@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseClient } from '@supabase/supabase-js';
-import { SUPABASE_CLIENT } from '../supabase/supabase.constants';
+import { SUPABASE_ANON_CLIENT } from '../supabase/supabase.constants';
 import { LencoService } from '../lenco/lenco.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { InitiatePaymentDto, PaymentMethod } from './dto/initiate-payment.dto';
@@ -24,7 +24,7 @@ export class PaymentsService {
     private readonly configService: ConfigService,
     private readonly lencoService: LencoService,
     private readonly subscriptionsService: SubscriptionsService,
-    @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient,
+    @Inject(SUPABASE_ANON_CLIENT) private readonly supabase: SupabaseClient,
   ) {
     this.currentProvider = this.configService.get<PaymentProvider>(
       'PAYMENT_PROVIDER',
