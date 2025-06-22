@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { SupabaseClient } from '@supabase/supabase-js';
-import { SUPABASE_ANON_CLIENT } from 'src/supabase/supabase.constants';
+import { SUPABASE_SERVICE_ADMIN } from 'src/supabase/supabase.constants';
 import { Property } from 'src/properties/dto/property.response.dto';
 
 @Injectable()
@@ -15,7 +15,7 @@ export class SavedPropertiesService {
   private readonly tableName = 'saved_properties';
 
   constructor(
-    @Inject(SUPABASE_ANON_CLIENT) private readonly supabase: SupabaseClient,
+    @Inject(SUPABASE_SERVICE_ADMIN) private readonly supabase: SupabaseClient,
   ) {}
 
   async findSavedPropertyIds(userId: string): Promise<string[]> {
