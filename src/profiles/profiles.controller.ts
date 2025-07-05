@@ -8,12 +8,15 @@ import {
   HttpCode,
   HttpStatus,
   ValidationPipe,
+  UseInterceptors,
 } from "@nestjs/common";
 import { ProfilesService } from "./profiles.service";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { GetUser } from "src/auth/decoraters/get-user.decorator";
 import { User as AuthUser } from "@supabase/supabase-js";
 import { IsString, IsIn, Matches } from "class-validator";
+import { CacheInterceptor, CacheResponse } from '../cache/cache.interceptor';
+import { CacheService } from '../cache/cache.service';
 
 export type UserRoleDto = "user" | "agent";
 
@@ -36,6 +39,8 @@ export class ProfilesController {
   // ADD THIS NEW GET ENDPOINT
   @Get("me") // Endpoint: GET /api/profiles/me
   @UseGuards(JwtAuthGuard)
+  @UseInterceptors(CacheInterceptor)
+  @CacheResponse('profiles:user', CacheService.TTL.USER_DATA)
   @HttpCode(HttpStatus.OK)
   async getUserProfile(@GetUser() authUser: AuthUser) {
     if (!authUser || !authUser.id) {

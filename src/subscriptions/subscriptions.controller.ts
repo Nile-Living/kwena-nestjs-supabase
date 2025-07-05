@@ -12,11 +12,14 @@ import {
   HttpCode,
   HttpStatus,
   Query,
+  UseInterceptors,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { SubscriptionsService } from './subscriptions.service';
 import { CreateSubscriptionDto } from './dto/create-subscription.dto';
 import { UpdateSubscriptionDto } from './dto/update-subscription.dto';
+import { CacheInterceptor, CacheResponse } from '../cache/cache.interceptor';
+import { CacheService } from '../cache/cache.service';
 
 @Controller('subscriptions')
 @UseGuards(AuthGuard('jwt'))
@@ -24,12 +27,16 @@ export class SubscriptionsController {
   constructor(private readonly subscriptionsService: SubscriptionsService) {}
 
   @Get('plans')
+  @UseInterceptors(CacheInterceptor)
+  @CacheResponse('subscriptions:plans', CacheService.TTL.STATIC_DATA)
   @HttpCode(HttpStatus.OK)
   async getSubscriptionPlans() {
     return this.subscriptionsService.getSubscriptionPlans();
   }
 
   @Get('plans/:type')
+  @UseInterceptors(CacheInterceptor)
+  @CacheResponse('subscriptions:plan', CacheService.TTL.STATIC_DATA)
   @HttpCode(HttpStatus.OK)
   async getSubscriptionPlan(@Param('type') type: string) {
     return this.subscriptionsService.getSubscriptionPlan(type as any);
@@ -51,12 +58,16 @@ export class SubscriptionsController {
   }
 
   @Get('active')
+  @UseInterceptors(CacheInterceptor)
+  @CacheResponse('subscriptions:active', CacheService.TTL.USER_DATA)
   @HttpCode(HttpStatus.OK)
   async getUserActiveSubscription(@Request() req: any) {
     return this.subscriptionsService.getUserActiveSubscription(req.user.id);
   }
 
   @Get('status')
+  @UseInterceptors(CacheInterceptor)
+  @CacheResponse('subscriptions:status', CacheService.TTL.USER_DATA)
   @HttpCode(HttpStatus.OK)
   async getSubscriptionStatus(@Request() req: any) {
     const isSubscribed = await this.subscriptionsService.isUserSubscribed(
@@ -68,6 +79,8 @@ export class SubscriptionsController {
   }
 
   @Get('features')
+  @UseInterceptors(CacheInterceptor)
+  @CacheResponse('subscriptions:features', CacheService.TTL.USER_DATA)
   @HttpCode(HttpStatus.OK)
   async getUserFeatures(@Request() req: any) {
     return this.subscriptionsService.getUserSubscriptionFeatures(req.user.id);

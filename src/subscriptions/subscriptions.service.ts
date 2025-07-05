@@ -20,6 +20,7 @@ import {
   SubscriptionStatus,
 } from './dto/update-subscription.dto';
 import { SubscriptionFeaturesDto } from './dto/subscription-features.dto';
+import { CacheService } from '../cache/cache.service';
 
 export interface UserSubscription {
   id: string;
@@ -103,6 +104,7 @@ export class SubscriptionsService {
 
   constructor(
     @Inject(SUPABASE_SERVICE_ADMIN) private readonly supabase: SupabaseClient,
+    private readonly cacheService: CacheService,
   ) {}
 
   // Check and update expired subscriptions
@@ -681,5 +683,37 @@ async createSubscription(
 
     const currentCount = await this.getUserSavedSearchCount(userId);
     return currentCount < features.max_saved_searches;
+  }
+
+  /**
+   * Invalidate subscription-related caches for a user
+   */
+  private async invalidateUserSubscriptionCaches(userId: string): Promise<void> {
+    try {
+      await Promise.all([
+        this.cacheService.deleteByPattern(`kwena:*:cache:subscriptions:*user:${userId}*`),
+        this.cacheService.deleteByPattern(`kwena:*:cache:profiles:*user:${userId}*`),
+      ]);
+      
+      this.logger.debug(`Subscription caches invalidated for user ${userId}`);
+    } catch (error) {
+      this.logger.error(`Error invalidating subscription caches for user ${userId}:`, error);
+    }
+  }
+
+  /**
+   * Invalidate static subscription plan caches
+   */
+  private async invalidateSubscriptionPlanCaches(): Promise<void> {
+    try {
+      await Promise.all([
+        this.cacheService.deleteByPattern('kwena:*:cache:subscriptions:plans*'),
+        this.cacheService.deleteByPattern('kwena:*:cache:subscriptions:plan*'),
+      ]);
+      
+      this.logger.debug('Subscription plan caches invalidated');
+    } catch (error) {
+      this.logger.error('Error invalidating subscription plan caches:', error);
+    }
   }
 }

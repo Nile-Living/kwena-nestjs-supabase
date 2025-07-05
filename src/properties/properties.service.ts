@@ -781,8 +781,8 @@ async findAll(queryDto: QueryPropertyDto): Promise<PropertyResponseDto> {
       this.logger.log(`Details inserted successfully into ${detailTableName}`);
     }
     const newProperty = await this.findOne(newBaseProperty.id);
-    // Invalidate relevant caches
-    await this.invalidatePropertyCaches();
+    // Invalidate relevant caches with property data for smart invalidation
+    await this.invalidatePropertyCaches(newBaseProperty.id, newBaseProperty);
     return newProperty;
   }
 
@@ -974,8 +974,8 @@ async findAll(queryDto: QueryPropertyDto): Promise<PropertyResponseDto> {
       }
     }
     const updatedProperty = await this.findOne(id);
-    // Invalidate relevant caches
-    await this.invalidatePropertyCaches(id);
+    // Invalidate relevant caches with updated property data
+    await this.invalidatePropertyCaches(id, { ...currentProperty, ...baseUpdatesToApply });
     return updatedProperty;
   }
 
@@ -1024,27 +1024,85 @@ async findAll(queryDto: QueryPropertyDto): Promise<PropertyResponseDto> {
       );
     }
     this.logger.log(`Property ID: ${id} removed successfully from Supabase.`);
-    // Invalidate relevant caches
-    await this.invalidatePropertyCaches(id);
+    // Invalidate relevant caches with removed property data
+    await this.invalidatePropertyCaches(id, propertyToRemove);
   }
 
   /**
-   * Invalidate property-related caches
+   * Invalidate property-related caches with smart patterns
    */
-  private async invalidatePropertyCaches(propertyId?: string): Promise<void> {
+  private async invalidatePropertyCaches(propertyId?: string, property?: any): Promise<void> {
     try {
-      // Invalidate general property list caches
-      await this.cacheService.deleteByPattern('properties:list:*');
-      await this.cacheService.deleteByPattern('properties:promoted:*');
+      const invalidationTasks: Promise<void>[] = [];
+      
+      // Always invalidate general property list caches
+      invalidationTasks.push(
+        this.cacheService.deleteByPattern('kwena:*:cache:properties:list:*'),
+        this.cacheService.deleteByPattern('kwena:*:cache:properties:promoted:*')
+      );
       
       // Invalidate specific property cache if ID provided
       if (propertyId) {
-        await this.cacheService.deleteByPattern(`properties:detail:*:${propertyId}*`);
+        invalidationTasks.push(
+          this.cacheService.deleteByPattern(`kwena:*:cache:properties:detail:*${propertyId}*`)
+        );
       }
       
-      this.logger.debug('Property caches invalidated');
+      // Smart invalidation based on property data
+      if (property) {
+        // Invalidate category-specific caches
+        if (property.category) {
+          invalidationTasks.push(
+            this.cacheService.deleteByPattern(`kwena:*:cache:properties:list:*category:${property.category}*`)
+          );
+        }
+        
+        // Invalidate location-specific caches
+        if (property.location) {
+          const locationKey = property.location.toLowerCase().replace(/\s+/g, '');
+          invalidationTasks.push(
+            this.cacheService.deleteByPattern(`kwena:*:cache:properties:list:*location:*${locationKey}*`)
+          );
+        }
+        
+        // Invalidate promotion status caches if promotion changed
+        if (property.is_promoted !== undefined) {
+          invalidationTasks.push(
+            this.cacheService.deleteByPattern('kwena:*:cache:properties:promoted:*')
+          );
+        }
+        
+        // Invalidate user-specific caches (saved properties, etc.)
+        if (property.user_id) {
+          invalidationTasks.push(
+            this.cacheService.deleteByPattern(`kwena:*:cache:*user:${property.user_id}*`)
+          );
+        }
+      }
+      
+      // Execute all invalidation tasks in parallel
+      await Promise.all(invalidationTasks);
+      
+      this.logger.debug(`Property caches invalidated for property ${propertyId || 'unknown'}`);
     } catch (error) {
       this.logger.error('Error invalidating property caches:', error);
+    }
+  }
+
+  /**
+   * Invalidate user-specific caches
+   */
+  private async invalidateUserCaches(userId: string): Promise<void> {
+    try {
+      await Promise.all([
+        this.cacheService.deleteByPattern(`kwena:*:cache:profiles:user:*user:${userId}*`),
+        this.cacheService.deleteByPattern(`kwena:*:cache:subscriptions:*user:${userId}*`),
+        this.cacheService.deleteByPattern(`kwena:*:cache:properties:*user:${userId}*`),
+      ]);
+      
+      this.logger.debug(`User-specific caches invalidated for user ${userId}`);
+    } catch (error) {
+      this.logger.error(`Error invalidating user caches for ${userId}:`, error);
     }
   }
 }

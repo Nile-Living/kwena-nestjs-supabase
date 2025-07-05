@@ -45,12 +45,13 @@ export class CacheService {
   async get<T>(key: string): Promise<T | undefined> {
     try {
       const cached = await this.cacheManager.get<T>(key);
-      if (cached) {
+      if (cached !== undefined && cached !== null) {
         this.logger.debug(`Cache HIT: ${key}`);
+        return cached;
       } else {
         this.logger.debug(`Cache MISS: ${key}`);
+        return undefined;
       }
-      return cached;
     } catch (error) {
       this.logger.error(`Cache GET error for key ${key}:`, error);
       return undefined;
@@ -87,13 +88,15 @@ export class CacheService {
   async deleteByPattern(pattern: string): Promise<void> {
     try {
       // This requires Redis store with pattern support
-      const redisStore = this.cacheManager.store as any;
-      if (redisStore.client && redisStore.client.keys) {
+      const redisStore = (this.cacheManager as any).store;
+      if (redisStore && redisStore.client && redisStore.client.keys) {
         const keys = await redisStore.client.keys(pattern);
         if (keys.length > 0) {
           await redisStore.client.del(...keys);
           this.logger.debug(`Cache DELETE PATTERN: ${pattern} (${keys.length} keys)`);
         }
+      } else {
+        this.logger.warn(`Pattern deletion not supported for this cache store type`);
       }
     } catch (error) {
       this.logger.error(`Cache DELETE PATTERN error for ${pattern}:`, error);
