@@ -13,7 +13,7 @@ import { QueryPropertyDto } from './dto/query-property.dto';
 import { PropertyResponseDto, Property } from './dto/property.response.dto';
 import { UpdatePropertyDto } from './dto/update-property.dto';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
-import { CACHE_MANAGER, Cache } from '@nestjs/cache-manager';
+import { CacheService } from '../cache/cache.service';
 import { ProfilesService } from 'src/profiles/profiles.service';
 
 const REGULAR_PROPERTIES_PER_AD = 7;
@@ -28,7 +28,7 @@ export class PropertiesService {
   constructor(
     @Inject(SUPABASE_ANON_CLIENT) private readonly supabase: SupabaseClient,
     private readonly cloudinaryService: CloudinaryService,
-    @Inject(CACHE_MANAGER) private cacheManager: Cache,
+    private readonly cacheService: CacheService,
     private readonly profilesService: ProfilesService
   ) {}
 
@@ -575,7 +575,7 @@ async findAll(queryDto: QueryPropertyDto): Promise<PropertyResponseDto> {
 
   if (allPromotedAdsMasterList.length > 0 && regularProperties.length > 0) {
     let shownAdIds: string[] = 
-      (await this.cacheManager.get<string[]>(userShownAdsCacheKey)) || [];
+      (await this.cacheService.get<string[]>(userShownAdsCacheKey)) || [];
 
     this.logger.debug(
       `User ${effectiveSessionId} has previously seen ads: ${shownAdIds.join(', ')}`,
@@ -592,7 +592,7 @@ async findAll(queryDto: QueryPropertyDto): Promise<PropertyResponseDto> {
       shownAdIds = [];
       unshownAds = [...allPromotedAdsMasterList];
       
-      await this.cacheManager.del(userShownAdsCacheKey);
+      await this.cacheService.delete(userShownAdsCacheKey);
     }
 
     if (unshownAds.length > 0) {
@@ -624,7 +624,7 @@ async findAll(queryDto: QueryPropertyDto): Promise<PropertyResponseDto> {
 
       if (newlyShownAdIds.length > 0) {
         const updatedShownAdIds = [...shownAdIds, ...newlyShownAdIds];
-        await this.cacheManager.set(
+        await this.cacheService.set(
           userShownAdsCacheKey,
           updatedShownAdIds,
           SHOWN_ADS_TTL_SECONDS,
@@ -780,7 +780,10 @@ async findAll(queryDto: QueryPropertyDto): Promise<PropertyResponseDto> {
       }
       this.logger.log(`Details inserted successfully into ${detailTableName}`);
     }
-    return this.findOne(newBaseProperty.id);
+    const newProperty = await this.findOne(newBaseProperty.id);
+    // Invalidate relevant caches
+    await this.invalidatePropertyCaches();
+    return newProperty;
   }
 
   async findOne(id: string): Promise<Property & { userProfile?: any }> {
@@ -970,7 +973,10 @@ async findAll(queryDto: QueryPropertyDto): Promise<PropertyResponseDto> {
         this.logger.log(`Details upserted in ${detailTableName} for ID: ${id}`);
       }
     }
-    return this.findOne(id);
+    const updatedProperty = await this.findOne(id);
+    // Invalidate relevant caches
+    await this.invalidatePropertyCaches(id);
+    return updatedProperty;
   }
 
   async remove(id: string): Promise<void> {
@@ -1018,5 +1024,27 @@ async findAll(queryDto: QueryPropertyDto): Promise<PropertyResponseDto> {
       );
     }
     this.logger.log(`Property ID: ${id} removed successfully from Supabase.`);
+    // Invalidate relevant caches
+    await this.invalidatePropertyCaches(id);
+  }
+
+  /**
+   * Invalidate property-related caches
+   */
+  private async invalidatePropertyCaches(propertyId?: string): Promise<void> {
+    try {
+      // Invalidate general property list caches
+      await this.cacheService.deleteByPattern('properties:list:*');
+      await this.cacheService.deleteByPattern('properties:promoted:*');
+      
+      // Invalidate specific property cache if ID provided
+      if (propertyId) {
+        await this.cacheService.deleteByPattern(`properties:detail:*:${propertyId}*`);
+      }
+      
+      this.logger.debug('Property caches invalidated');
+    } catch (error) {
+      this.logger.error('Error invalidating property caches:', error);
+    }
   }
 }

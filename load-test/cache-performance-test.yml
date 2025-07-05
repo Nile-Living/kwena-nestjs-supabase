@@ -1,0 +1,85 @@
+config:
+  target: 'http://localhost:3000'
+  phases:
+    # Test cache performance with repeated requests
+    - duration: 300
+      arrivalRate: 100
+      name: "Cache hit ratio test"
+    # Test cache invalidation under load
+    - duration: 180
+      arrivalRate: 150
+      name: "Cache invalidation stress test"
+  variables:
+    popularPropertyIds: ["test-id-1", "test-id-2", "test-id-3", "test-id-4", "test-id-5"]
+    commonFilters:
+      - { category: "house", location: "Lilongwe" }
+      - { category: "apartment", location: "Blantyre" }
+      - { propertyType: "rent", minPrice: "100000", maxPrice: "500000" }
+      - { propertyType: "sale", bedrooms: "3", bathrooms: "2" }
+
+scenarios:
+  - name: "Cache Hit Ratio Test"
+    weight: 80
+    flow:
+      # Repeatedly request the same popular properties to test cache hits
+      - get:
+          url: "/properties"
+          qs:
+            page: 1
+            pageSize: 20
+            category: "house"
+            location: "Lilongwe"
+          expect:
+            - statusCode: 200
+          tags:
+            - cache-hit-test
+
+      # Request popular property details repeatedly
+      - get:
+          url: "/properties/{{ popularPropertyIds[Math.floor(Math.random() * popularPropertyIds.length)] }}"
+          expect:
+            - statusCode: [200, 404] # 404 is acceptable for test IDs
+          tags:
+            - popular-property-detail
+
+      # Test promoted properties cache
+      - get:
+          url: "/properties/promoted"
+          expect:
+            - statusCode: 200
+          tags:
+            - promoted-cache-test
+
+      - think: 0.5
+
+  - name: "Cache Invalidation Simulation"
+    weight: 20
+    flow:
+      # Simulate property updates that would invalidate cache
+      # (Note: These would need authentication in real scenario)
+      
+      # First, request data to populate cache
+      - get:
+          url: "/properties"
+          qs:
+            page: 1
+            pageSize: 10
+            category: "house"
+          expect:
+            - statusCode: 200
+          tags:
+            - pre-invalidation-request
+
+      # Then request again to test if still cached
+      - get:
+          url: "/properties"
+          qs:
+            page: 1
+            pageSize: 10
+            category: "house"
+          expect:
+            - statusCode: 200
+          tags:
+            - post-invalidation-request
+
+      - think: 1

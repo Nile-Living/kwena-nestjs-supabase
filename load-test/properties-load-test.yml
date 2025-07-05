@@ -1,0 +1,103 @@
+config:
+  target: 'http://localhost:3000'
+  phases:
+    # Warm-up phase
+    - duration: 60
+      arrivalRate: 10
+      name: "Warm-up"
+    # Ramp-up phase
+    - duration: 300
+      arrivalRate: 50
+      rampTo: 200
+      name: "Ramp-up to peak load"
+    # Peak load phase - 1000 concurrent users
+    - duration: 600
+      arrivalRate: 200
+      name: "Peak load - 1000 concurrent users"
+    # Cool-down phase
+    - duration: 120
+      arrivalRate: 200
+      rampTo: 10
+      name: "Cool-down"
+  variables:
+    pageSize: [10, 20, 50]
+    category: ["house", "apartment", "land", "commercial", "all"]
+    propertyType: ["rent", "sale", "all"]
+    location: ["Lilongwe", "Blantyre", "Mzuzu", "Zomba", ""]
+  defaults:
+    headers:
+      'Content-Type': 'application/json'
+      'Accept': 'application/json'
+
+scenarios:
+  - name: "Properties API Load Test"
+    weight: 100
+    flow:
+      # Test properties listing endpoint with various filters
+      - get:
+          url: "/properties"
+          qs:
+            page: "{{ Math.floor(Math.random() * 10) + 1 }}"
+            pageSize: "{{ pageSize }}"
+            category: "{{ category }}"
+            propertyType: "{{ propertyType }}"
+            location: "{{ location }}"
+          capture:
+            - json: "$.properties[0].id"
+              as: "randomPropertyId"
+          expect:
+            - statusCode: 200
+            - hasProperty: "properties"
+            - hasProperty: "total"
+          tags:
+            - properties-list
+
+      # Test promoted properties endpoint
+      - get:
+          url: "/properties/promoted"
+          expect:
+            - statusCode: 200
+          tags:
+            - promoted-properties
+
+      # Test individual property detail (if we captured an ID)
+      - get:
+          url: "/properties/{{ randomPropertyId }}"
+          ifTrue: "randomPropertyId"
+          expect:
+            - statusCode: 200
+            - hasProperty: "id"
+          tags:
+            - property-detail
+
+      # Simulate some think time between requests
+      - think: 1
+
+      # Test property search with different filters
+      - get:
+          url: "/properties"
+          qs:
+            page: 1
+            pageSize: 20
+            minPrice: "{{ Math.floor(Math.random() * 500000) + 100000 }}"
+            maxPrice: "{{ Math.floor(Math.random() * 2000000) + 1000000 }}"
+            bedrooms: "{{ Math.floor(Math.random() * 5) + 1 }}"
+            bathrooms: "{{ Math.floor(Math.random() * 4) + 1 }}"
+          expect:
+            - statusCode: 200
+          tags:
+            - filtered-search
+
+      # Test pagination stress
+      - loop:
+          - get:
+              url: "/properties"
+              qs:
+                page: "{{ $loopCount + 1 }}"
+                pageSize: 10
+                category: "house"
+              expect:
+                - statusCode: 200
+          count: 3
+          tags:
+            - pagination-test

@@ -14,6 +14,8 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 import { PaymentsModule } from './payments/payments.module';
 import { ZynleModule } from './zynle/zynle.module';
+import { CacheModule } from './cache/cache.module';
+import { MonitoringModule } from './monitoring/monitoring.module';
 
 @Module({
   imports: [
@@ -21,6 +23,7 @@ import { ZynleModule } from './zynle/zynle.module';
       isGlobal: true,
       envFilePath: ".env"
     }),
+    CacheModule,
     SupabaseModule,
     AuthModule,
     PropertiesModule,
@@ -33,7 +36,8 @@ import { ZynleModule } from './zynle/zynle.module';
     NotificationsModule,
     SubscriptionsModule,
     PaymentsModule,
-    ZynleModule
+    ZynleModule,
+    MonitoringModule
   ],
   controllers: [AppController],
   providers: [AppService],

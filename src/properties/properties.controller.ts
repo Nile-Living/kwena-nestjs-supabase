@@ -16,6 +16,8 @@ import { PropertyResponseDto, Property } from './dto/property.response.dto';
 import { MultipartFile } from '@fastify/multipart';
 import { FilesInterceptor } from '@nestjs/platform-express'; // Or Fastify equivalent if you set one up
 import { AuthGuard } from '@nestjs/passport';
+import { CacheInterceptor, CacheResponse } from '../cache/cache.interceptor';
+import { CacheService } from '../cache/cache.service';
 
 
 @Controller('properties')
@@ -161,18 +163,24 @@ export class PropertiesController {
   }
 
   @Get()
+  @UseInterceptors(CacheInterceptor)
+  @CacheResponse('properties:list', CacheService.TTL.PROPERTIES_LIST)
   @HttpCode(HttpStatus.OK)
   findAll(@Query() queryDto: QueryPropertyDto): Promise<PropertyResponseDto> {
     return this.propertiesService.findAll(queryDto);
   }
 
   @Get('promoted')
+  @UseInterceptors(CacheInterceptor)
+  @CacheResponse('properties:promoted', CacheService.TTL.PROPERTIES_LIST)
   @HttpCode(HttpStatus.OK)
   findPromoted(): Promise<Property[]> {
     return this.propertiesService.findPromoted();
   }
 
   @Get(':id')
+  @UseInterceptors(CacheInterceptor)
+  @CacheResponse('properties:detail', CacheService.TTL.PROPERTY_DETAIL)
   @HttpCode(HttpStatus.OK)
   findOne(@Param('id') id: string): Promise<Property> {
     return this.propertiesService.findOne(id);
