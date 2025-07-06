@@ -15,6 +15,7 @@ import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 import { PaymentsModule } from './payments/payments.module';
 import { CacheModule } from './cache/cache.module';
 import { MonitoringModule } from './monitoring/monitoring.module';
+import { AnalyticsModule } from './analytics/analytics.module';
 
 @Module({
   imports: [
@@ -35,7 +36,8 @@ import { MonitoringModule } from './monitoring/monitoring.module';
     NotificationsModule,
     SubscriptionsModule,
     PaymentsModule,
-    MonitoringModule
+    MonitoringModule,
+    AnalyticsModule
   ],
   controllers: [AppController],
   providers: [AppService],

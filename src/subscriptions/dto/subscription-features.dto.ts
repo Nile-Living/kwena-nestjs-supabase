@@ -20,4 +20,20 @@ export class SubscriptionFeaturesDto {
   @IsBoolean()
   @IsOptional()
   analytics_access?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
+  verified_contact?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
+  priority_support?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
+  bulk_operations?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
+  premium_badge?: boolean;
 }
