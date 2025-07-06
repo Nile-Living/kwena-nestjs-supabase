@@ -233,7 +233,7 @@ CLOUDINARY_API_SECRET=your_api_secret
 
 # Payment Providers
 LENCO_API_KEY=your_lenco_key
-ZYNLE_API_KEY=your_zynle_key
+# Payment provider: Only Lenco is supported
 
 # JWT
 JWT_SECRET=your_jwt_secret

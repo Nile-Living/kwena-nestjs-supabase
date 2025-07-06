@@ -627,10 +627,4 @@ export class PromotionsService {
     }
   }
 
-  async handleZynleWebhook(payload: any): Promise<void> {
-    this.logger.log(
-      'Zynle webhook received, but Lenco is the active provider for promotions. Ignoring.',
-    );
-    return;
-  }
 }

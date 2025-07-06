@@ -180,15 +180,4 @@ export class WebhooksController {
     }
   }
 
-  @Post('zynle/callback')
-  @HttpCode(HttpStatus.OK)
-  async handleZynleCallback(
-    @Body() callbackData: any,
-    @Headers() headers: any,
-  ) {
-    this.logger.log(
-      'Received Zynle callback, but Lenco is the active provider. Ignoring.',
-    );
-    return { status: 'ignored', message: 'Provider mismatch, Lenco is active' };
-  }
 }
