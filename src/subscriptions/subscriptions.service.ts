@@ -58,39 +58,47 @@ export class SubscriptionsService {
     [SubscriptionType.BASIC]: {
       type: SubscriptionType.BASIC,
       name: 'Basic Plan',
-      description: 'Perfect for casual property seekers',
-      price_monthly: 50, // ZMW
+      description: 'Perfect for casual property seekers in Zambia',
+      price_monthly: 50, // ZMW (affordable for local market)
       price_yearly: 500,
       features: {
-        max_saved_searches: 5,
+        max_saved_searches: 3,
         priority_notifications: false,
         advanced_filters: false,
         property_alerts: true,
         api_rate_limit: 100,
         analytics_access: false,
+        verified_contact: false,
+        priority_support: false,
+        bulk_operations: false,
+        premium_badge: false,
       },
     },
     [SubscriptionType.PREMIUM]: {
       type: SubscriptionType.PREMIUM,
       name: 'Premium Plan',
-      description: 'For serious property hunters',
-      price_monthly: 150,
-      price_yearly: 1500,
+      description: 'For serious property hunters and investors',
+      price_monthly: 120, // ZMW (adjusted for Zambian market)
+      price_yearly: 1200,
       features: {
-        max_saved_searches: 20,
+        max_saved_searches: 15,
         priority_notifications: true,
         advanced_filters: true,
         property_alerts: true,
         api_rate_limit: 500,
         analytics_access: true,
+        verified_contact: true,
+        priority_support: true,
+        bulk_operations: false,
+        premium_badge: true,
       },
     },
     [SubscriptionType.ENTERPRISE]: {
       type: SubscriptionType.ENTERPRISE,
-      name: 'Enterprise Plan',
-      description: 'For property professionals and businesses',
-      price_monthly: 500,
-      price_yearly: 5000,
+      name: 'Agent & Business Plan',
+      description: 'For real estate agents and property businesses',
+      price_monthly: 250, // ZMW (competitive for agents)
+      price_yearly: 2500,
       features: {
         max_saved_searches: -1, // Unlimited
         priority_notifications: true,
@@ -98,6 +106,10 @@ export class SubscriptionsService {
         property_alerts: true,
         api_rate_limit: -1, // Unlimited
         analytics_access: true,
+        verified_contact: true,
+        priority_support: true,
+        bulk_operations: true,
+        premium_badge: true,
       },
     },
   };

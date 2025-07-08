@@ -15,7 +15,7 @@ import { SubscriptionType } from '../subscriptions/dto/create-subscription.dto';
 import { LencoService } from '../lenco/lenco.service';
 import * as crypto from 'crypto';
 import { FastifyRequest } from 'fastify';
-import { PromotionsService } from 'src/promotions/promotions.service';
+import { PromotionsService } from '../promotions/promotions.service';
 
 @Controller('webhooks')
 export class WebhooksController {
