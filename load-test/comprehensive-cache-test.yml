@@ -1,0 +1,66 @@
+config:
+  target: 'http://localhost:3000'
+  phases:
+    - duration: 120
+      arrivalRate: 20
+      name: "Comprehensive Cache Test"
+  defaults:
+    headers:
+      'Content-Type': 'application/json'
+      'Accept': 'application/json'
+
+scenarios:
+  - name: "Cache Performance Test"
+    weight: 100
+    flow:
+      # First request - cache miss
+      - get:
+          url: "/api/properties"
+          qs:
+            page: 1
+            pageSize: 10
+          expect:
+            - statusCode: 200
+          tags:
+            - properties-first-request
+      
+      # Second request - should hit cache
+      - get:
+          url: "/api/properties"
+          qs:
+            page: 1
+            pageSize: 10
+          expect:
+            - statusCode: 200
+          tags:
+            - properties-cache-hit
+      
+      # Test different filters
+      - get:
+          url: "/api/properties"
+          qs:
+            page: 1
+            pageSize: 10
+            category: "house"
+          expect:
+            - statusCode: 200
+          tags:
+            - properties-filtered
+      
+      # Test static data caching
+      - get:
+          url: "/api/subscriptions/plans"
+          expect:
+            - statusCode: 200
+          tags:
+            - subscriptions-static
+      
+      # Test monitoring endpoints
+      - get:
+          url: "/api/monitoring/health"
+          expect:
+            - statusCode: 200
+          tags:
+            - monitoring-health
+      
+      - think: 1

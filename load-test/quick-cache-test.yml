@@ -1,0 +1,61 @@
+config:
+  target: 'http://localhost:3000'
+  phases:
+    - duration: 60
+      arrivalRate: 10
+      name: "Cache Performance Test"
+  defaults:
+    headers:
+      'Content-Type': 'application/json'
+      'Accept': 'application/json'
+
+scenarios:
+  - name: "Simple Cache Test"
+    weight: 100
+    flow:
+      # Test properties listing endpoint
+      - get:
+          url: "/api/properties"
+          qs:
+            page: 1
+            pageSize: 10
+            category: "house"
+          expect:
+            - statusCode: 200
+          tags:
+            - properties-cached
+      
+      # Test same endpoint again to hit cache
+      - get:
+          url: "/api/properties"
+          qs:
+            page: 1
+            pageSize: 10  
+            category: "house"
+          expect:
+            - statusCode: 200
+          tags:
+            - properties-cached-hit
+
+      # Test subscription plans (static data)
+      - get:
+          url: "/api/subscriptions/plans"
+          expect:
+            - statusCode: 200
+          tags:
+            - subscriptions-cached
+
+      # Test monitoring endpoints
+      - get:
+          url: "/api/monitoring/health"
+          expect:
+            - statusCode: 200
+          tags:
+            - monitoring
+
+      - get:
+          url: "/api/monitoring/cache/info"
+          expect:
+            - statusCode: 200
+          tags:
+            - cache-info
